@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
+import json
 from pathlib import Path
 
 
@@ -85,6 +86,36 @@ class Settings:
     feishu_bitable_table_id: str = field(
         default_factory=lambda: _read_str("FEISHU_BITABLE_TABLE_ID", ""),
     )
+    feishu_field_media_id: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_MEDIA_ID", "Media ID"),
+    )
+    feishu_field_device_id: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_DEVICE_ID", "Device ID"),
+    )
+    feishu_field_event_time: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_EVENT_TIME", "Event Time"),
+    )
+    feishu_field_elimination_type: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_ELIMINATION_TYPE", "Elimination Type"),
+    )
+    feishu_field_stool_score: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_STOOL_SCORE", "Stool Score"),
+    )
+    feishu_field_stool_shape_note: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_STOOL_SHAPE_NOTE", "Stool Shape Note"),
+    )
+    feishu_field_confidence: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_CONFIDENCE", "Confidence"),
+    )
+    feishu_field_raw_summary: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_RAW_SUMMARY", "Raw Summary"),
+    )
+    feishu_field_screenshot: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_SCREENSHOT", "Screenshot"),
+    )
+    feishu_field_source_day: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_SOURCE_DAY", "Source Day"),
+    )
     temp_media_root: Path = field(
         default_factory=lambda: Path(_read_str("TEMP_MEDIA_ROOT", "./tmp/media")),
     )
@@ -130,9 +161,26 @@ class Settings:
             "petkit_session_refresh_seconds": self.petkit_session_refresh_seconds,
             "petkit_device_ids": self.petkit_device_ids,
             "gemini_model": self.gemini_model,
+            "feishu_bitable_app_token": self.feishu_bitable_app_token,
+            "feishu_bitable_table_id": self.feishu_bitable_table_id,
             "temp_media_root": str(self.temp_media_root),
             "max_concurrent_decodes": self.max_concurrent_decodes,
             "max_concurrent_analyses": self.max_concurrent_analyses,
+        }
+
+    @property
+    def feishu_field_mapping(self) -> dict[str, str]:
+        return {
+            "media_id": self.feishu_field_media_id,
+            "device_id": self.feishu_field_device_id,
+            "event_time": self.feishu_field_event_time,
+            "elimination_type": self.feishu_field_elimination_type,
+            "stool_score": self.feishu_field_stool_score,
+            "stool_shape_note": self.feishu_field_stool_shape_note,
+            "confidence": self.feishu_field_confidence,
+            "raw_summary": self.feishu_field_raw_summary,
+            "screenshot": self.feishu_field_screenshot,
+            "source_day": self.feishu_field_source_day,
         }
 
 

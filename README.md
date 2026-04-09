@@ -39,4 +39,6 @@ PYTHONPATH=src python3 -m meow_toilet.phase0_petkit --source-day 2026-04-09
 PYTHONPATH=src python3 -m meow_toilet.phase0_petkit --source-day 2026-04-09 --download-sample
 PYTHONPATH=src python3 -m meow_toilet.phase0_media --source-day 2026-04-09 --output-dir ./tmp/phase0
 PYTHONPATH=src python3 -m meow_toilet.phase0_gemini --source-day 2026-04-09 --output-dir ./tmp/gemini
+PYTHONPATH=src python3 -m meow_toilet.phase0_feishu_fields
+PYTHONPATH=src python3 -m meow_toilet.phase0_feishu --source-day 2026-04-09 --output-dir ./tmp/feishu
 ```
