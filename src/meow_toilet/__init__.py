@@ -1,0 +1,2 @@
+"""MeowToliet application package."""
+

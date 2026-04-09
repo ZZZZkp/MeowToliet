@@ -1,0 +1,7 @@
+interface:
+  display_name: "Meow Toilet Monitor"
+  short_description: "PetKit to Gemini pipeline work"
+  default_prompt: "Use $meow-toilet-monitor to work on the MeowToliet PetKit, Gemini, and Feishu pipeline."
+
+policy:
+  allow_implicit_invocation: true

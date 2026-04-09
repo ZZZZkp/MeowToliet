@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meowtoliet"
+version = "0.1.0"
+description = "PetKit litter box pipeline for Gemini analysis and Feishu sync."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.16.0",
+  "arq>=0.26.0",
+  "fastapi>=0.116.0",
+  "httpx>=0.28.0",
+  "jinja2>=3.1.0",
+  "pypetkitapi>=1.26.0",
+  "sqlalchemy>=2.0.0",
+  "structlog>=25.0.0",
+  "tenacity>=9.0.0",
+  "uvicorn[standard]>=0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.17.0",
+  "pytest>=8.4.0",
+  "pytest-asyncio>=1.1.0",
+  "pytest-cov>=6.2.0",
+  "respx>=0.22.0",
+  "ruff>=0.12.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/meow_toilet"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["meow_toilet"]

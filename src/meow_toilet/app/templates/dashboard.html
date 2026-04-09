@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title }}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe6;
+        --panel: rgba(255, 252, 247, 0.92);
+        --ink: #1f2522;
+        --muted: #6b746e;
+        --accent: #0f766e;
+        --accent-soft: #d8efe8;
+        --warn: #b45309;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 28%),
+          linear-gradient(180deg, #f8f2ea 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+
+      main {
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 48px 20px 80px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 16px;
+        margin-bottom: 32px;
+      }
+
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2.4rem, 4vw, 4.2rem);
+        line-height: 0.95;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 760px;
+        line-height: 1.6;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid rgba(31, 37, 34, 0.08);
+        border-radius: 24px;
+        padding: 20px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 20px 60px rgba(31, 37, 34, 0.06);
+      }
+
+      .label {
+        font-size: 0.86rem;
+        color: var(--muted);
+      }
+
+      .state {
+        display: inline-flex;
+        margin-top: 10px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 600;
+      }
+
+      .state.warn {
+        background: rgba(180, 83, 9, 0.12);
+        color: var(--warn);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="eyebrow">PetKit + Gemini + Feishu</div>
+        <h1>MeowToliet Control Panel</h1>
+        <p>
+          This panel is intentionally lightweight in Phase 0. It will grow into the place for
+          checking device health, new cover images, queue state, and failed event retries without
+          keeping videos permanently stored.
+        </p>
+      </section>
+      <section class="grid">
+        <article class="card">
+          <div class="label">PetKit credentials</div>
+          <div class="state {% if not petkit_ready %}warn{% endif %}">
+            {% if petkit_ready %}Configured{% else %}Missing{% endif %}
+          </div>
+        </article>
+        <article class="card">
+          <div class="label">Gemini access</div>
+          <div class="state {% if not gemini_ready %}warn{% endif %}">
+            {% if gemini_ready %}Configured{% else %}Missing{% endif %}
+          </div>
+        </article>
+        <article class="card">
+          <div class="label">Feishu Bitable access</div>
+          <div class="state {% if not feishu_ready %}warn{% endif %}">
+            {% if feishu_ready %}Configured{% else %}Missing{% endif %}
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
+
