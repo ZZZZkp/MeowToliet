@@ -7,6 +7,12 @@ description: Build and maintain the MeowToliet project for PetKit litter box ing
 
 Use this skill when working inside the MeowToliet repository.
 
+## Current baseline
+
+- Treat this repository as past early scaffolding. PetKit, ffmpeg, Gemini, and Feishu all already have working adapters and probe commands.
+- Preserve the current rule that videos are temporary and screenshots plus structured metadata are the persisted outputs.
+- Assume the GitHub repository already exists and `main` is live.
+
 ## Core constraints
 
 - Treat PetKit as the source of truth for device metadata, cover images, and downloadable media.
@@ -22,13 +28,15 @@ Use this skill when working inside the MeowToliet repository.
 1. Verify the local architecture before coding: `web`, `scheduler`, `worker`, `adapters`, `services`, `tests`.
 2. Preserve the temporary media lifecycle: download, decode, analyze, screenshot, sync, cleanup.
 3. Keep interfaces explicit around PetKit, Gemini, Feishu, and media processing so they can be stubbed in tests.
-4. Add or update tests before wiring external services whenever a behavior can be isolated.
-5. Favor small retries, idempotent writes, and dedupe keys based on PetKit media identity.
+4. Reuse the existing `phase0_*.py` commands to validate live integrations before widening the architecture.
+5. Add or update tests before wiring external services whenever a behavior can be isolated.
+6. Favor small retries, idempotent writes, and dedupe keys based on PetKit media identity.
 
 ## Data expectations
 
 - Gemini output should be normalized into structured fields:
   - event time
+  - event offset seconds
   - elimination type
   - stool score or shape class
   - confidence
@@ -36,7 +44,14 @@ Use this skill when working inside the MeowToliet repository.
 - Feishu records should include screenshot, event metadata, prompt or model version, and sync status.
 - The dashboard should emphasize queue state, device health, cover images, and failure recovery instead of long-term media browsing.
 
+## Important repo facts
+
+- The current Bitable only exposes a small field set, so the Feishu adapter must tolerate partial field mappings.
+- `时间` is currently handled as a text value, not a dedicated Feishu date field.
+- The fastest way to inspect live Feishu columns is `python3 -m meow_toilet.phase0_feishu_fields`.
+- The fastest way to verify the whole current chain is `phase0_petkit -> phase0_media -> phase0_gemini -> phase0_feishu`.
+
 ## References
 
 - Read [references/project-target.md](references/project-target.md) when you need the full corrected project goal and phase plan.
-
+- Read [references/current-state.md](references/current-state.md) when you need the validated current capabilities, live field names, and next priorities.
