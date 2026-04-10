@@ -9,12 +9,67 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meow -d meow_toilet"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      APP_TIMEZONE: Asia/Shanghai
+      DATABASE_URL: postgresql+psycopg://meow:meow@postgres:5432/meow_toilet
+      DATABASE_FALLBACK_URL: sqlite:///./tmp/meow_toilet.db
+      REDIS_URL: redis://redis:6379/0
+      ARQ_QUEUE_NAME: meow_toilet:media
+      TEMP_MEDIA_ROOT: ./tmp/media
+      PETKIT_EMAIL: ${PETKIT_EMAIL:-}
+      PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
+      PETKIT_REGION: ${PETKIT_REGION:-cn}
+      PETKIT_DEVICE_IDS: ${PETKIT_DEVICE_IDS:-}
+      PETKIT_POLL_INTERVAL_SECONDS: ${PETKIT_POLL_INTERVAL_SECONDS:-300}
+      PETKIT_SESSION_REFRESH_SECONDS: ${PETKIT_SESSION_REFRESH_SECONDS:-1800}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_BITABLE_APP_TOKEN: ${FEISHU_BITABLE_APP_TOKEN:-}
+      FEISHU_BITABLE_TABLE_ID: ${FEISHU_BITABLE_TABLE_ID:-}
+      FEISHU_FIELD_MEDIA_ID: ${FEISHU_FIELD_MEDIA_ID:-Media ID}
+      FEISHU_FIELD_DEVICE_ID: ${FEISHU_FIELD_DEVICE_ID:-Device ID}
+      FEISHU_FIELD_EVENT_TIME: ${FEISHU_FIELD_EVENT_TIME:-Event Time}
+      FEISHU_FIELD_ELIMINATION_TYPE: ${FEISHU_FIELD_ELIMINATION_TYPE:-Elimination Type}
+      FEISHU_FIELD_STOOL_SCORE: ${FEISHU_FIELD_STOOL_SCORE:-Stool Score}
+      FEISHU_FIELD_STOOL_SHAPE_NOTE: ${FEISHU_FIELD_STOOL_SHAPE_NOTE:-Stool Shape Note}
+      FEISHU_FIELD_CONFIDENCE: ${FEISHU_FIELD_CONFIDENCE:-Confidence}
+      FEISHU_FIELD_RAW_SUMMARY: ${FEISHU_FIELD_RAW_SUMMARY:-Raw Summary}
+      FEISHU_FIELD_SCREENSHOT: ${FEISHU_FIELD_SCREENSHOT:-Screenshot}
+      FEISHU_FIELD_SOURCE_DAY: ${FEISHU_FIELD_SOURCE_DAY:-Source Day}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./tmp:/app/tmp
 
 volumes:
   postgres_data:
-

@@ -1,0 +1,13 @@
+.git
+.gitignore
+.idea
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+tmp
+tests
+skills

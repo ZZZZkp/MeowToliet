@@ -68,8 +68,9 @@ class FakeFeishuSink:
         media: PetKitMedia,
         analysis: AnalysisResult,
         screenshot,
-    ) -> None:
+    ) -> str:
         self.upserts.append((media.id, screenshot.path))
+        return "rec-test"
 
 
 def test_pipeline_uses_temporary_workspace_and_cleans_it(tmp_path: Path) -> None:
@@ -99,6 +100,7 @@ def test_pipeline_uses_temporary_workspace_and_cleans_it(tmp_path: Path) -> None
         outcome = await pipeline.run(PipelineRequest(media=media))
 
         assert outcome.media_id == "media-1"
+        assert outcome.feishu_record_id == "rec-test"
         assert outcome.analysis.elimination_type == EliminationType.POOP
         assert processor.capture_calls[0][1] == 9.0
         assert feishu.upserts == [("media-1", outcome.screenshot.path)]

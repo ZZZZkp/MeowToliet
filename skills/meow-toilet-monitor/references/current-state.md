@@ -6,9 +6,13 @@
 - Two camera litter boxes are discoverable from the configured account.
 - Historical PetKit media lookup by adjusted timestamp works.
 - Temporary media download and decryption work.
+- PetKit preview images can be decrypted into real JPEGs with the record AES key.
 - `ffmpeg` normalization, duration probing, and screenshot extraction work.
 - Gemini Files API upload and structured JSON analysis work.
 - Feishu Bitable image upload and record creation work.
+- Feishu field mapping can fall back to real Chinese and English column aliases.
+- Dashboard manual actions can poll, process the next task, and retry an individual failed task.
+- Docker `web` starts against PostgreSQL and Redis and serves the live dashboard on port `8000`.
 - The repository is committed locally and pushed to GitHub.
 
 ## Key commands
@@ -44,10 +48,11 @@ Leave the other Feishu field mapping variables empty until matching columns exis
 
 - Gemini sample result was successfully produced for media `105874_1775664690`.
 - Feishu sample result successfully created record `recvghw46rGWBG`.
+- Preview payload `108228:108228_1775777657` was verified to decrypt from raw PetKit bytes into a `528x528` JPEG.
 
 ## Recommended next work
 
-1. Add persistence for event metadata and job states.
-2. Convert probes into scheduler-driven and worker-driven tasks.
-3. Improve the dashboard to show queue status, cover images, and replay controls.
-4. Expand the Bitable schema so more structured fields can be synced directly.
+1. Turn the current manual dashboard actions into long-running scheduler and worker loops.
+2. Add replay and richer investigation tools on top of the existing cover and queue board.
+3. Expand the Bitable schema so more structured fields can be synced directly.
+4. Decide whether background workers should remain optional in low-frequency home mode.

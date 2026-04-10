@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -14,6 +14,9 @@
         --accent: #0f766e;
         --accent-soft: #d8efe8;
         --warn: #b45309;
+        --rose: #be123c;
+        --rose-soft: rgba(190, 18, 60, 0.08);
+        --shadow: 0 20px 60px rgba(31, 37, 34, 0.06);
       }
 
       * {
@@ -73,7 +76,7 @@
         border-radius: 24px;
         padding: 20px;
         backdrop-filter: blur(12px);
-        box-shadow: 0 20px 60px rgba(31, 37, 34, 0.06);
+        box-shadow: var(--shadow);
       }
 
       .label {
@@ -95,40 +98,372 @@
         background: rgba(180, 83, 9, 0.12);
         color: var(--warn);
       }
+
+      .state.fail {
+        background: var(--rose-soft);
+        color: var(--rose);
+      }
+
+      .section-title {
+        margin: 40px 0 16px;
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: var(--muted);
+      }
+
+      .metric {
+        display: grid;
+        gap: 8px;
+      }
+
+      .metric strong {
+        font-size: clamp(1.8rem, 3vw, 3rem);
+        line-height: 1;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .task-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+
+      .task-card {
+        overflow: hidden;
+        padding: 0;
+      }
+
+      .cover {
+        aspect-ratio: 16 / 9;
+        width: 100%;
+        object-fit: cover;
+        display: block;
+        background:
+          linear-gradient(135deg, rgba(15, 118, 110, 0.12), rgba(31, 37, 34, 0.04));
+      }
+
+      .task-body {
+        padding: 18px 20px 20px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .task-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .task-title {
+        margin: 0;
+        font-size: 1.05rem;
+      }
+
+      .task-copy {
+        font-size: 0.94rem;
+        color: var(--muted);
+      }
+
+      .mono {
+        font-family: "SFMono-Regular", "Menlo", monospace;
+        font-size: 0.84rem;
+      }
+
+      .controls {
+        display: grid;
+        gap: 16px;
+      }
+
+      .control-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .input {
+        border: 1px solid rgba(31, 37, 34, 0.12);
+        border-radius: 14px;
+        padding: 12px 14px;
+        font: inherit;
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--ink);
+      }
+
+      .button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 16px;
+        font: inherit;
+        font-weight: 600;
+        color: white;
+        background: var(--accent);
+        cursor: pointer;
+      }
+
+      .button.secondary {
+        color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+
+      .result-box {
+        white-space: pre-wrap;
+        background: rgba(31, 37, 34, 0.04);
+        border-radius: 18px;
+        padding: 16px;
+        color: var(--muted);
+        min-height: 84px;
+      }
     </style>
   </head>
   <body>
     <main>
       <section class="hero">
         <div class="eyebrow">PetKit + Gemini + Feishu</div>
-        <h1>MeowToliet Control Panel</h1>
+        <h1>MeowToliet 猫砂盆看板</h1>
         <p>
-          This panel is intentionally lightweight in Phase 0. It will grow into the place for
-          checking device health, new cover images, queue state, and failed event retries without
-          keeping videos permanently stored.
+          这个看板现在刻意保持轻量，适合家用低频场景。后面它会继续扩展成查看设备状态、
+          封面图、任务队列和失败重试的统一入口，同时依旧不做视频长期存储。
         </p>
       </section>
       <section class="grid">
         <article class="card">
-          <div class="label">PetKit credentials</div>
-          <div class="state {% if not petkit_ready %}warn{% endif %}">
-            {% if petkit_ready %}Configured{% else %}Missing{% endif %}
+          <div class="label">PetKit 凭据</div>
+          <div class="state {% if not snapshot.integration.petkit_ready %}warn{% endif %}">
+            {% if snapshot.integration.petkit_ready %}已配置{% else %}缺失{% endif %}
           </div>
         </article>
         <article class="card">
-          <div class="label">Gemini access</div>
-          <div class="state {% if not gemini_ready %}warn{% endif %}">
-            {% if gemini_ready %}Configured{% else %}Missing{% endif %}
+          <div class="label">Gemini 访问配置</div>
+          <div class="state {% if not snapshot.integration.gemini_ready %}warn{% endif %}">
+            {% if snapshot.integration.gemini_ready %}已配置{% else %}缺失{% endif %}
           </div>
         </article>
         <article class="card">
-          <div class="label">Feishu Bitable access</div>
-          <div class="state {% if not feishu_ready %}warn{% endif %}">
-            {% if feishu_ready %}Configured{% else %}Missing{% endif %}
+          <div class="label">飞书多维表格配置</div>
+          <div class="state {% if not snapshot.integration.feishu_ready %}warn{% endif %}">
+            {% if snapshot.integration.feishu_ready %}已配置{% else %}缺失{% endif %}
           </div>
+        </article>
+        <article class="card metric">
+          <div class="label">等待处理</div>
+          <strong>{{ snapshot.queue.queued }}</strong>
+          <p>等待下一次处理流程领取的任务数量。</p>
+        </article>
+        <article class="card metric">
+          <div class="label">处理中</div>
+          <strong>{{ snapshot.queue.running }}</strong>
+          <p>当前正在解码、截图或调用 Gemini 分析的任务。</p>
+        </article>
+        <article class="card metric">
+          <div class="label">已完成</div>
+          <strong>{{ snapshot.queue.succeeded }}</strong>
+          <p>已经完成截图提取和飞书写入的任务数量。</p>
+        </article>
+        <article class="card metric">
+          <div class="label">失败任务</div>
+          <strong>{{ snapshot.queue.failed }}</strong>
+          <p>这些任务适合作为后续重试和回放入口。</p>
         </article>
       </section>
+
+      <h2 class="section-title">调度信息</h2>
+      <section class="grid">
+        <article class="card">
+          <div class="label">轮询节奏</div>
+          <div class="meta">
+            <span>每 {{ snapshot.poll_interval_seconds }} 秒轮询一次</span>
+            <span>每 {{ snapshot.refresh_interval_seconds }} 秒刷新一次会话</span>
+            <span>当前累计 {{ snapshot.queue.total }} 条任务</span>
+            <span>存储后端：{{ task_store_backend }}</span>
+            <span>派发后端：{{ dispatcher_backend }}</span>
+          </div>
+          <p>
+            看板现在读取的是调度器和处理器共用的任务流，不再只是静态展示配置是否填写。
+          </p>
+        </article>
+      </section>
+
+      <h2 class="section-title">手动操作</h2>
+      <section class="controls">
+        <article class="card">
+          <div class="label">低频家庭模式</div>
+          <p>
+            对于每天十几到几十次事件的家庭场景，完全可以直接在看板里手动操作，让 SQLite
+            或 PostgreSQL 只负责保存状态和审计记录，不必一开始就上很重的常驻后台。
+          </p>
+          <div class="control-row">
+            <input
+              id="source-day"
+              class="input mono"
+              type="date"
+              value=""
+              placeholder="YYYY-MM-DD"
+            />
+            <button id="poll-button" class="button" type="button">手动轮询一次 PetKit</button>
+            <button id="process-next-button" class="button secondary" type="button">
+              处理下一条任务
+            </button>
+          </div>
+        </article>
+        <article class="card">
+          <div class="label">最近一次操作结果</div>
+          <div id="operation-result" class="result-box">还没有执行过手动操作。</div>
+        </article>
+      </section>
+
+      <h2 class="section-title">最近任务</h2>
+      <section class="task-grid">
+        {% for task in snapshot.recent_tasks %}
+        <article class="card task-card">
+          {% if task.media.cover_url %}
+          <img
+            class="cover"
+            src="/api/media/cover/{{ task.id }}?ts={{ snapshot.generated_at.timestamp()|int }}"
+            alt="{{ task.media.id }} 的 PetKit 封面图"
+            data-device-id="{{ task.media.device_id }}"
+            data-task-id="{{ task.id }}"
+            loading="lazy"
+          />
+          {% else %}
+          <div class="cover"></div>
+          {% endif %}
+          <div class="task-body">
+            <div class="task-header">
+              <h3 class="task-title">{{ task.media.device_id }}</h3>
+              <div
+                class="state {% if task.status.value == 'failed' %}fail{% elif task.status.value == 'queued' %}warn{% endif %}"
+              >
+                {{ task.status.value }}
+              </div>
+            </div>
+            <div class="task-copy mono">{{ task.media.id }}</div>
+            <div class="task-copy">
+              来源日期 {{ task.media.source_day }} · 发现时间 {{ task.discovered_at.isoformat() }}
+            </div>
+            {% if task.elimination_type %}
+            <div class="task-copy">
+              {{ task.elimination_type.value }} · 置信度 {{ "%.2f"|format(task.confidence or 0.0) }}
+            </div>
+            {% endif %}
+            {% if task.stool_shape_note %}
+            <div class="task-copy">{{ task.stool_shape_note }}</div>
+            {% endif %}
+            {% if task.last_error %}
+            <div class="task-copy" style="color: var(--rose)">{{ task.last_error }}</div>
+            {% endif %}
+            <div class="control-row">
+              <button class="button secondary retry-button" data-task-id="{{ task.id }}" type="button">
+                处理这条任务
+              </button>
+            </div>
+          </div>
+        </article>
+        {% else %}
+        <article class="card">
+          <div class="label">还没有任务</div>
+          <p>
+            当调度器开始轮询 PetKit 媒体记录后，任务和封面图就会自动出现在这里。
+          </p>
+        </article>
+        {% endfor %}
+      </section>
     </main>
+    <script>
+      const sourceDayInput = document.getElementById("source-day");
+      const operationResult = document.getElementById("operation-result");
+      const pollButton = document.getElementById("poll-button");
+      const processNextButton = document.getElementById("process-next-button");
+
+      if (!sourceDayInput.value) {
+        sourceDayInput.value = new Date().toISOString().slice(0, 10);
+      }
+
+      function buildCoverPlaceholder(deviceId, taskId) {
+        const safeDeviceId = deviceId || "未知设备";
+        const safeTaskId = taskId || "未知任务";
+        const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d8efe8" />
+      <stop offset="100%" stop-color="#f4efe6" />
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" rx="28" fill="url(#bg)" />
+  <circle cx="112" cy="108" r="44" fill="#0f766e" opacity="0.14" />
+  <circle cx="530" cy="274" r="54" fill="#1f2522" opacity="0.06" />
+  <text x="56" y="170" font-size="34" fill="#1f2522" font-family="Avenir Next, Helvetica Neue, sans-serif">
+    PetKit 预览暂不可用
+  </text>
+  <text x="56" y="214" font-size="20" fill="#6b746e" font-family="Avenir Next, Helvetica Neue, sans-serif">
+    设备 ${safeDeviceId}
+  </text>
+  <text x="56" y="248" font-size="18" fill="#6b746e" font-family="Menlo, monospace">
+    ${safeTaskId}
+  </text>
+</svg>`.trim();
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      }
+
+      document.querySelectorAll(".cover[data-task-id]").forEach((image) => {
+        image.addEventListener("error", () => {
+          if (image.dataset.fallbackApplied === "true") {
+            return;
+          }
+          image.dataset.fallbackApplied = "true";
+          image.src = buildCoverPlaceholder(image.dataset.deviceId, image.dataset.taskId);
+        });
+      });
+
+      async function runOperation(button, url) {
+        const previous = button.textContent;
+        button.disabled = true;
+        button.textContent = "执行中...";
+        try {
+          const response = await fetch(url, { method: "POST" });
+          const payload = await response.json();
+          operationResult.textContent = JSON.stringify(payload, null, 2);
+          window.setTimeout(() => window.location.reload(), 500);
+        } catch (error) {
+          operationResult.textContent = String(error);
+        } finally {
+          button.disabled = false;
+          button.textContent = previous;
+        }
+      }
+
+      pollButton.addEventListener("click", async () => {
+        const day = sourceDayInput.value;
+        const url = day ? `/api/operations/poll?source_day=${encodeURIComponent(day)}` : "/api/operations/poll";
+        await runOperation(pollButton, url);
+      });
+
+      processNextButton.addEventListener("click", async () => {
+        await runOperation(processNextButton, "/api/operations/process-next");
+      });
+
+      document.querySelectorAll(".retry-button").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const taskId = button.dataset.taskId;
+          await runOperation(button, `/api/operations/process/${encodeURIComponent(taskId)}`);
+        });
+      });
+    </script>
   </body>
 </html>
-

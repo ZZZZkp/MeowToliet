@@ -35,9 +35,10 @@ class LitterEventPipeline:
                 path=screenshot_file,
                 captured_at=analysis.event_time,
             )
-            await self._feishu.upsert_event(request.media, analysis, screenshot)
+            record_id = await self._feishu.upsert_event(request.media, analysis, screenshot)
             return PipelineOutcome(
                 media_id=request.media.id,
                 screenshot=screenshot,
                 analysis=analysis,
+                feishu_record_id=record_id,
             )

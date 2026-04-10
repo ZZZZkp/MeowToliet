@@ -32,7 +32,7 @@ class Phase0PetKitProbe:
 
 
 class PetKitApiAdapter:
-    """Thin adapter around py-petkit-api for MeowToliet workflows."""
+    """围绕 py-petkit-api 的轻量适配层，用于 MeowToliet 工作流。"""
 
     def __init__(
         self,
@@ -112,24 +112,116 @@ class PetKitApiAdapter:
             client = await self._ensure_client()
             cloud_media = self._media_cache.get(media.dedupe_key)
             if cloud_media is None:
-                raise KeyError(f"PetKit media {media.dedupe_key} is not in the local cache.")
+                cloud_media = await self._refresh_cached_media(client, media)
+            if cloud_media is None:
+                raise KeyError(
+                    f"PetKit media {media.dedupe_key} could not be reloaded from PetKit.",
+                )
             if cloud_media.video is None:
                 raise ValueError(f"PetKit media {media.dedupe_key} does not have a video URL.")
 
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with TemporaryDirectory(dir=destination.parent) as temp_root:
-                downloader = DownloadDecryptMedia(Path(temp_root), client)
-                await downloader.download_file(cloud_media, [MediaType.VIDEO])
-                downloaded = Path(temp_root).glob(
-                    f"**/{cloud_media.device_id}_{cloud_media.timestamp}.mp4",
+            return await self._download_cloud_media_file(
+                client=client,
+                cloud_media=cloud_media,
+                destination=destination,
+                media_type=MediaType.VIDEO,
+                suffix=".mp4",
+                missing_error=(
+                    f"PetKit media download finished without a decrypted video for {media.id}."
+                ),
+            )
+
+    async def download_cover_image(self, media: PetKitMedia, destination: Path) -> Path:
+        async with self._lock:
+            client = await self._ensure_client()
+            cloud_media = self._media_cache.get(media.dedupe_key)
+            if cloud_media is None:
+                cloud_media = await self._refresh_cached_media(client, media)
+            if cloud_media is None:
+                raise KeyError(
+                    f"PetKit media {media.dedupe_key} could not be reloaded from PetKit.",
                 )
-                downloaded_file = next(downloaded, None)
-                if downloaded_file is None:
-                    raise FileNotFoundError(
-                        f"PetKit media download finished without a decrypted video for {media.id}.",
-                    )
-                downloaded_file.replace(destination)
-            return destination
+            if cloud_media.image is None:
+                raise ValueError(
+                    f"PetKit media {media.dedupe_key} does not have a cover image URL.",
+                )
+            if not cloud_media.aes_key:
+                raise ValueError(
+                    f"PetKit media {media.dedupe_key} does not have a cover image AES key.",
+                )
+
+            return await self._download_cloud_media_file(
+                client=client,
+                cloud_media=cloud_media,
+                destination=destination,
+                media_type=MediaType.IMAGE,
+                suffix=".jpg",
+                missing_error=(
+                    "PetKit media download finished without a decrypted cover image "
+                    f"for {media.id}."
+                ),
+            )
+
+    async def get_fresh_cover_url(self, media: PetKitMedia) -> str | None:
+        async with self._lock:
+            client = await self._ensure_client()
+            cloud_media = await self._refresh_cached_media(client, media)
+            if cloud_media is None:
+                return media.cover_url
+            return cloud_media.image or media.cover_url
+
+    async def _refresh_cached_media(
+        self,
+        client: PetKitClient,
+        media: PetKitMedia,
+    ) -> MediaCloud | None:
+        if media.device_id not in self._device_entities:
+            await client.get_devices_data()
+            devices = self._collect_devices(client)
+            self._device_entities = {device.id: entity for device, entity in devices}
+
+        entity = self._device_entities.get(media.device_id)
+        if entity is None:
+            return None
+
+        entity.device_records = await self._fetch_litter_records_for_day(
+            client=client,
+            entity=entity,
+            source_day=media.source_day,
+        )
+        media_items = await client.media_manager.gather_all_media_from_cloud([entity])
+        matched_media: MediaCloud | None = None
+        for media_cloud in media_items:
+            if media_cloud.video is None:
+                continue
+            mapped_media = self._map_media_cloud(media_cloud, media.source_day)
+            self._media_cache[mapped_media.dedupe_key] = media_cloud
+            if mapped_media.dedupe_key == media.dedupe_key:
+                matched_media = media_cloud
+        return matched_media
+
+    async def _download_cloud_media_file(
+        self,
+        *,
+        client: PetKitClient,
+        cloud_media: MediaCloud,
+        destination: Path,
+        media_type: str,
+        suffix: str,
+        missing_error: str,
+    ) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=destination.parent) as temp_root:
+            downloader = DownloadDecryptMedia(Path(temp_root), client)
+            await downloader.download_file(cloud_media, [media_type])
+            downloaded = Path(temp_root).glob(
+                f"**/{cloud_media.device_id}_{cloud_media.timestamp}{suffix}",
+            )
+            downloaded_file = next(downloaded, None)
+            if downloaded_file is None:
+                raise FileNotFoundError(missing_error)
+            downloaded_file.replace(destination)
+        return destination
 
     async def run_phase0_probe(
         self,
@@ -171,7 +263,10 @@ class PetKitApiAdapter:
         sample_media = media_items[0]
         probe = self._replace_probe(probe, sampled_media_id=sample_media.id)
         if not sample_download:
-            notes.append("Skipped sample media download. Re-run with --download-sample to verify decryption.")
+            notes.append(
+                "Skipped sample media download. "
+                "Re-run with --download-sample to verify decryption.",
+            )
             return probe
 
         with TemporaryDirectory() as temp_root:
@@ -199,7 +294,9 @@ class PetKitApiAdapter:
     async def _get_device_entity(self, device_id: str) -> Litter:
         entity = self._device_entities.get(device_id)
         if entity is None:
-            raise KeyError(f"PetKit litter device {device_id} was not found in the current account.")
+            raise KeyError(
+                f"PetKit litter device {device_id} was not found in the current account.",
+            )
         return entity
 
     async def _fetch_litter_records_for_day(
@@ -280,7 +377,10 @@ class PetKitApiAdapter:
         source_day: str,
     ) -> dict[str, int]:
         if device_type not in LITTER_WITH_CAMERA:
-            raise ValueError(f"Historical timestamp querying only applies to camera litter devices, got {device_type}.")
+            raise ValueError(
+                "Historical timestamp querying only applies to camera litter devices, "
+                f"got {device_type}.",
+            )
         target_date = date.fromisoformat(source_day)
         target_time = datetime.combine(
             target_date,

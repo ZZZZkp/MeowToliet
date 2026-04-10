@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 class FfmpegVideoProcessor:
-    """Use ffmpeg and ffprobe to normalize video and capture screenshots."""
+    """使用 ffmpeg 和 ffprobe 做视频标准化与截图提取。"""
 
     def __init__(
         self,
@@ -100,4 +100,3 @@ class FfmpegVideoProcessor:
                 f"{stderr.decode('utf-8', errors='replace')}",
             )
         return stdout.decode("utf-8", errors="replace")
-

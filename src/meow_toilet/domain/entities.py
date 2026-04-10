@@ -13,6 +13,13 @@ class EliminationType(StrEnum):
     UNKNOWN = "unknown"
 
 
+class JobStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True, slots=True)
 class PetKitDevice:
     id: str
@@ -63,3 +70,59 @@ class PipelineOutcome:
     media_id: str
     screenshot: ScreenshotArtifact
     analysis: AnalysisResult
+    feishu_record_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MediaTask:
+    id: str
+    media: PetKitMedia
+    status: JobStatus
+    discovered_at: datetime
+    updated_at: datetime
+    attempts: int = 0
+    last_error: str | None = None
+    finished_at: datetime | None = None
+    feishu_record_id: str | None = None
+    event_time: datetime | None = None
+    elimination_type: EliminationType | None = None
+    stool_score: str | None = None
+    stool_shape_note: str | None = None
+    confidence: float | None = None
+    raw_summary: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulerPollResult:
+    source_day: str
+    scanned_device_count: int
+    discovered_media_count: int
+    enqueued_task_count: int
+    deduped_task_count: int
+    dispatched_task_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class QueueSnapshot:
+    total: int
+    queued: int
+    running: int
+    succeeded: int
+    failed: int
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationSnapshot:
+    petkit_ready: bool
+    gemini_ready: bool
+    feishu_ready: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardSnapshot:
+    generated_at: datetime
+    integration: IntegrationSnapshot
+    queue: QueueSnapshot
+    poll_interval_seconds: int
+    refresh_interval_seconds: int
+    recent_tasks: list[MediaTask]

@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
-import json
 from pathlib import Path
 
 
@@ -57,8 +56,17 @@ class Settings:
             "postgresql+psycopg://meow:meow@localhost:5432/meow_toilet",
         ),
     )
+    database_fallback_url: str = field(
+        default_factory=lambda: _read_str(
+            "DATABASE_FALLBACK_URL",
+            "sqlite:///./tmp/meow_toilet.db",
+        ),
+    )
     redis_url: str = field(
         default_factory=lambda: _read_str("REDIS_URL", "redis://localhost:6379/0"),
+    )
+    arq_queue_name: str = field(
+        default_factory=lambda: _read_str("ARQ_QUEUE_NAME", "meow_toilet:media"),
     )
     petkit_email: str = field(default_factory=lambda: _read_str("PETKIT_EMAIL", ""))
     petkit_password: str = field(
@@ -155,7 +163,9 @@ class Settings:
             "app_port": self.app_port,
             "app_timezone": self.app_timezone,
             "database_url": self.database_url,
+            "database_fallback_url": self.database_fallback_url,
             "redis_url": self.redis_url,
+            "arq_queue_name": self.arq_queue_name,
             "petkit_region": self.petkit_region,
             "petkit_poll_interval_seconds": self.petkit_poll_interval_seconds,
             "petkit_session_refresh_seconds": self.petkit_session_refresh_seconds,

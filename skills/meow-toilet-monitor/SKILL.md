@@ -10,12 +10,14 @@ Use this skill when working inside the MeowToliet repository.
 ## Current baseline
 
 - Treat this repository as past early scaffolding. PetKit, ffmpeg, Gemini, and Feishu all already have working adapters and probe commands.
+- Assume the Dockerized `web` dashboard is real and usable, not just a placeholder.
 - Preserve the current rule that videos are temporary and screenshots plus structured metadata are the persisted outputs.
 - Assume the GitHub repository already exists and `main` is live.
 
 ## Core constraints
 
 - Treat PetKit as the source of truth for device metadata, cover images, and downloadable media.
+- Remember that PetKit preview images are encrypted assets. Do not assume `cover_url` can be embedded directly in the browser.
 - Do not design around permanent video storage. Download video only for active processing or playback, then delete it.
 - Persist screenshots, structured analysis results, job states, and audit metadata.
 - Prefer cover images in the dashboard. Download the video on demand only when playback or re-analysis is requested.
@@ -31,6 +33,7 @@ Use this skill when working inside the MeowToliet repository.
 4. Reuse the existing `phase0_*.py` commands to validate live integrations before widening the architecture.
 5. Add or update tests before wiring external services whenever a behavior can be isolated.
 6. Favor small retries, idempotent writes, and dedupe keys based on PetKit media identity.
+7. Preserve the low-frequency home-use bias: manual controls and light operational flow beat overbuilt automation.
 
 ## Data expectations
 
@@ -47,7 +50,9 @@ Use this skill when working inside the MeowToliet repository.
 ## Important repo facts
 
 - The current Bitable only exposes a small field set, so the Feishu adapter must tolerate partial field mappings.
+- The Feishu adapter now resolves configured field names through alias fallback, including Chinese field names.
 - `时间` is currently handled as a text value, not a dedicated Feishu date field.
+- Dashboard cover delivery should prefer decrypting PetKit previews server-side and only fall back to placeholders when decryption or fetch fails.
 - The fastest way to inspect live Feishu columns is `python3 -m meow_toilet.phase0_feishu_fields`.
 - The fastest way to verify the whole current chain is `phase0_petkit -> phase0_media -> phase0_gemini -> phase0_feishu`.
 

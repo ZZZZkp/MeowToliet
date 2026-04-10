@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: test lint run worker scheduler
+.PHONY: test lint run worker scheduler migrate
 
 test:
 	PYTHONPATH=src $(PYTHON) -m pytest
@@ -17,3 +17,5 @@ worker:
 scheduler:
 	PYTHONPATH=src $(PYTHON) -m meow_toilet.scheduler.service
 
+migrate:
+	PYTHONPATH=src $(PYTHON) -m alembic upgrade head

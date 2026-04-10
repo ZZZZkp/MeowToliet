@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import timedelta
-import json
 from pathlib import Path
 from typing import Any
 
@@ -12,13 +12,12 @@ import httpx
 from meow_toilet.config import Settings
 from meow_toilet.domain.entities import AnalysisResult, EliminationType, PetKitMedia
 
-
 GEMINI_FILE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "event_offset_seconds": {
             "type": "number",
-            "description": "Seconds from the start of the clip to the main elimination event.",
+            "description": "从视频开始到主要排泄行为发生时刻的秒数偏移。",
         },
         "elimination_type": {
             "type": "string",
@@ -26,19 +25,19 @@ GEMINI_FILE_SCHEMA: dict[str, Any] = {
         },
         "stool_score": {
             "type": ["string", "null"],
-            "description": "Bristol-style stool score from 1 to 7 if visible, else null.",
+            "description": "若便便清晰可见，返回 1 到 7 的布里斯托分型，否则返回 null。",
         },
         "stool_shape_note": {
             "type": ["string", "null"],
-            "description": "Short stool description only when poop is visible.",
+            "description": "仅在能看到便便时填写简短客观描述。",
         },
         "confidence": {
             "type": "number",
-            "description": "Confidence from 0 to 1.",
+            "description": "置信度，范围 0 到 1。",
         },
         "raw_summary": {
             "type": "string",
-            "description": "Short natural-language summary for debugging.",
+            "description": "用于排查问题的简短自然语言总结。",
         },
     },
     "required": [
@@ -51,18 +50,18 @@ GEMINI_FILE_SCHEMA: dict[str, Any] = {
     ],
 }
 
-GEMINI_PROMPT = """You are analyzing a cat litter-box video.
+GEMINI_PROMPT = """你正在分析一段猫砂盆视频。
 
-Return only structured JSON that follows the provided schema.
+只返回符合给定 schema 的结构化 JSON，不要输出额外说明。
 
-Rules:
-- event_offset_seconds must be the second offset from the beginning of the clip.
-- elimination_type must be one of: poop, pee, both, unknown.
-- stool_score must be a string from 1 to 7 only when poop is visually identifiable. Otherwise return null.
-- stool_shape_note should be a short factual description only when poop is visible. Otherwise return null.
-- confidence must be between 0 and 1.
-- raw_summary should be concise and factual.
-- If the clip is ambiguous, keep elimination_type as unknown and lower confidence.
+规则：
+- event_offset_seconds 必须是从视频开头算起的秒数偏移。
+- elimination_type 只能是 poop、pee、both、unknown 之一。
+- 只有在画面中能够明确识别便便时，stool_score 才返回 1 到 7 的字符串，否则返回 null。
+- 只有在能够看到便便时，stool_shape_note 才填写简短、客观、直接的描述，否则返回 null。
+- confidence 必须在 0 到 1 之间。
+- raw_summary 必须简洁、客观，避免夸张推断。
+- 如果画面模糊、被遮挡或者无法确认，请把 elimination_type 设为 unknown，并降低 confidence。
 """
 
 
@@ -75,7 +74,7 @@ class UploadedGeminiFile:
 
 
 class GeminiAnalyzer:
-    """Gemini video analyzer using the official REST API."""
+    """使用官方 REST API 调用 Gemini 进行视频分析。"""
 
     def __init__(
         self,
@@ -164,10 +163,15 @@ class GeminiAnalyzer:
             if file_data.state == "FAILED":
                 raise RuntimeError(f"Gemini file processing failed for {file_name}.")
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(f"Timed out waiting for Gemini file {file_name} to become ACTIVE.")
+                raise TimeoutError(
+                    f"Timed out waiting for Gemini file {file_name} to become ACTIVE.",
+                )
             await asyncio.sleep(self._poll_interval_seconds)
 
-    async def _generate_structured_response(self, uploaded_file: UploadedGeminiFile) -> dict[str, Any]:
+    async def _generate_structured_response(
+        self,
+        uploaded_file: UploadedGeminiFile,
+    ) -> dict[str, Any]:
         response = await self._client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent?key={self._api_key}",
             json={

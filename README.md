@@ -1,16 +1,23 @@
 # MeowToliet
 
-PetKit -> Gemini -> Feishu pipeline for cat litter events.
+PetKit -> Gemini -> Feishu 的猫砂盆事件流水线与轻量看板。
 
 ## Current status
 
-This repository has completed the main `Phase 0` verification work:
+This repository has completed the main `Phase 0` verification work and now includes a usable
+Dockerized dashboard:
 
 - PetKit login, device discovery, and historical media lookup are working.
 - Temporary video download and decryption are working.
 - `ffmpeg` normalization, duration probing, and screenshot extraction are working.
 - Gemini video analysis with structured JSON output is working.
 - Feishu Bitable record creation with screenshot attachment is working.
+- Scheduler media discovery can enqueue deduplicated tasks.
+- Worker execution can advance task state through queued, running, succeeded, and failed.
+- Dashboard and `/api/dashboard` now read from a shared task snapshot flow.
+- Manual poll, process-next, and per-task retry actions are wired through the dashboard.
+- PetKit preview images are handled as encrypted assets and decrypted server-side before being served.
+- Docker `web` can start with PostgreSQL, Redis, Alembic migration, and the live dashboard on port `8000`.
 - The repository has been initialized, committed, and pushed to GitHub.
 
 ## Planned flow
@@ -28,18 +35,42 @@ This repository has completed the main `Phase 0` verification work:
 - `src/meow_toilet/adapters/video.py`: `ffmpeg` and `ffprobe` based media processing.
 - `src/meow_toilet/adapters/gemini.py`: Gemini Files API upload and structured output parsing.
 - `src/meow_toilet/adapters/feishu.py`: Feishu tenant token, image upload, and Bitable record creation.
+- `src/meow_toilet/services/dashboard.py`: dashboard snapshot building and runtime cover-image delivery.
+- `src/meow_toilet/services/sql_task_store.py`: persistent task storage backed by PostgreSQL or SQLite fallback.
+- `src/meow_toilet/services/operations.py`: manual poll and retry actions exposed by the dashboard.
+- `src/meow_toilet/app/main.py` and `src/meow_toilet/app/templates/dashboard.html`: FastAPI routes and the lightweight board UI.
 - `src/meow_toilet/phase0_*.py`: real probe commands for each integration stage.
-- `tests/`: isolated tests for config, pipeline, PetKit mapping, video processing, Gemini, and Feishu.
+- `tests/`: isolated tests for config, dashboard, PetKit reload/decrypt behavior, pipeline, video processing, Gemini, and Feishu.
 
 ## Quick start
 
+### Local Python mode
+
 ```bash
+docker compose up -d postgres redis
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+PYTHONPATH=src python3 -m alembic upgrade head
 pytest
 uvicorn meow_toilet.app.main:app --reload
 ```
+
+If PostgreSQL is unavailable during local development, the runtime task store now falls back to
+`DATABASE_FALLBACK_URL`, which defaults to `sqlite:///./tmp/meow_toilet.db`.
+
+### Docker dashboard mode
+
+```bash
+docker compose up --build -d
+open http://127.0.0.1:8000/
+```
+
+The current dashboard is intentionally optimized for a low-frequency home setup:
+
+- PostgreSQL and Redis are kept for persistent state and dispatch compatibility.
+- The UI still supports lightweight manual operation instead of requiring long-running automation first.
+- Cover images are served on demand and videos are still temporary processing artifacts.
 
 ## Verified probe commands
 
@@ -81,10 +112,13 @@ Other Feishu field mappings can stay empty until matching columns are added to t
 - Media processing probe succeeded and produced a screenshot from media `105874_1775664690`.
 - Gemini probe succeeded and returned structured stool analysis for media `105874_1775664690`.
 - Feishu probe succeeded and created record `recvghw46rGWBG`.
+- Docker dashboard can render recent queue items and return decrypted PetKit preview JPEGs such as
+  `108228:108228_1775777657`.
+- Failed tasks can be retried from the dashboard even after the original in-memory media cache is gone.
+- Feishu writes can resolve real table field names via configured names plus Chinese or English aliases.
 
 ## Next priorities
 
-- Persist event metadata and job state in PostgreSQL.
-- Turn the Phase 0 commands into scheduler and worker jobs.
-- Expand the dashboard beyond configuration status into queue, cover images, and replay tools.
+- Replace single-shot scheduler and worker commands with long-running loops plus Redis-backed dispatch.
+- Expand the dashboard beyond queue snapshots into richer cover browsing, replay tools, and failure recovery actions.
 - Evolve the Feishu table schema so more structured fields can be written directly.
