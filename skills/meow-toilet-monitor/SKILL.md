@@ -41,7 +41,7 @@ Use this skill when working inside the MeowToliet repository.
   - event time
   - event offset seconds
   - elimination type
-  - stool score or shape class
+  - stool shape note in Chinese, with `null` for pee and `看不清` when visibility is insufficient
   - confidence
   - raw summary for debugging
 - Feishu records should include screenshot, event metadata, prompt or model version, and sync status.
@@ -51,9 +51,10 @@ Use this skill when working inside the MeowToliet repository.
 
 - The current Bitable only exposes a small field set, so the Feishu adapter must tolerate partial field mappings.
 - The Feishu adapter now resolves configured field names through alias fallback, including Chinese field names.
+- The current live Bitable includes `猫` and `排泄类型` as single-select columns, so writes must match real option names instead of sending raw backend enums.
 - `时间` is currently handled as a text value, not a dedicated Feishu date field.
 - Dashboard cover delivery should prefer decrypting PetKit previews server-side and only fall back to placeholders when decryption or fetch fails.
-- The fastest way to inspect live Feishu columns is `python3 -m meow_toilet.phase0_feishu_fields`.
+- The fastest way to inspect live Feishu columns and single-select options is `python3 -m meow_toilet.phase0_feishu_fields`.
 - The fastest way to verify the whole current chain is `phase0_petkit -> phase0_media -> phase0_gemini -> phase0_feishu`.
 
 ## References

@@ -53,14 +53,40 @@ def test_map_media_cloud_keeps_cover_and_event_metadata() -> None:
         timestamp=1712664000,
     )
 
-    media = adapter._map_media_cloud(cloud_media, "2026-04-09")
+    media = adapter._map_media_cloud(cloud_media, "2026-04-09", pet_name="翠饼")
 
     assert media.id == "device-1_1712664000"
     assert media.device_id == "1001"
     assert media.cover_url == "https://example.com/cover.jpg"
     assert media.encrypted_download_url == "https://example.com/video.m3u8"
     assert media.source_day == "2026-04-09"
+    assert media.pet_name == "翠饼"
     assert media.started_at.tzinfo == ZoneInfo("Asia/Shanghai")
+
+
+def test_resolve_pet_name_for_media_matches_timestamp() -> None:
+    cloud_media = MediaCloud(
+        event_id="device-1_1712664000",
+        event_type=SimpleNamespace(value="toileting"),
+        device_id=1001,
+        user_id=42,
+        image="https://example.com/cover.jpg",
+        video="https://example.com/video.m3u8",
+        filepath="1001/20260409/toileting",
+        aes_key="test-key",
+        timestamp=1712664000,
+    )
+    records = [
+        SimpleNamespace(timestamp=1712663000, pet_name="酥酥"),
+        SimpleNamespace(timestamp=1712664000, pet_name="翠饼"),
+    ]
+
+    pet_name = PetKitApiAdapter._resolve_pet_name_for_media(
+        media_cloud=cloud_media,
+        records=records,
+    )
+
+    assert pet_name == "翠饼"
 
 
 def test_download_media_can_reload_target_media_when_local_cache_is_empty(

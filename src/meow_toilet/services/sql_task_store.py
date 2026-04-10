@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, select
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -27,6 +27,7 @@ class MediaTaskRecord(Base):
     cover_url = Column(Text(), nullable=True)
     encrypted_download_url = Column(Text(), nullable=True)
     source_day = Column(String(32), nullable=False, index=True)
+    pet_name = Column(String(255), nullable=True)
     status = Column(String(32), nullable=False, index=True)
     discovered_at = Column(DateTime(timezone=True), nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, index=True)
@@ -47,6 +48,7 @@ class SqlAlchemyMediaTaskStore:
         self._engine = create_engine(database_url, future=True)
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
         Base.metadata.create_all(self._engine)
+        self._ensure_compatible_schema()
 
     async def enqueue_media(
         self,
@@ -63,6 +65,7 @@ class SqlAlchemyMediaTaskStore:
                     cover_url=media.cover_url,
                     encrypted_download_url=media.encrypted_download_url,
                     source_day=media.source_day,
+                    pet_name=media.pet_name,
                     status=JobStatus.QUEUED.value,
                     discovered_at=discovered_at,
                     updated_at=discovered_at,
@@ -161,6 +164,15 @@ class SqlAlchemyMediaTaskStore:
     def dispose(self) -> None:
         self._engine.dispose()
 
+    def _ensure_compatible_schema(self) -> None:
+        with self._engine.begin() as connection:
+            schema = inspect(connection)
+            if not schema.has_table("media_tasks"):
+                return
+            existing_columns = {column["name"] for column in schema.get_columns("media_tasks")}
+            if "pet_name" not in existing_columns:
+                connection.execute(text("ALTER TABLE media_tasks ADD COLUMN pet_name VARCHAR(255)"))
+
     def _mark_running(self, record: MediaTaskRecord, started_at: datetime) -> MediaTask:
         record.status = JobStatus.RUNNING.value
         record.updated_at = started_at
@@ -177,6 +189,7 @@ class SqlAlchemyMediaTaskStore:
         record.cover_url = media.cover_url
         record.encrypted_download_url = media.encrypted_download_url
         record.source_day = media.source_day
+        record.pet_name = media.pet_name
 
     @staticmethod
     def _to_task(record: MediaTaskRecord) -> MediaTask:
@@ -195,6 +208,7 @@ class SqlAlchemyMediaTaskStore:
                 cover_url=record.cover_url,
                 encrypted_download_url=record.encrypted_download_url,
                 source_day=record.source_day,
+                pet_name=record.pet_name,
             ),
             status=JobStatus(record.status),
             discovered_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.discovered_at),

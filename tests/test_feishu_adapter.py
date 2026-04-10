@@ -25,6 +25,7 @@ def test_feishu_sink_uploads_screenshot_and_creates_record(tmp_path: Path) -> No
         cover_url="https://example.com/cover.jpg",
         encrypted_download_url="https://example.com/video.mp4",
         source_day="2026-04-09",
+        pet_name="翠饼",
     )
     analysis = AnalysisResult(
         event_time=datetime(2026, 4, 9, 0, 12, 15, tzinfo=UTC),
@@ -72,9 +73,28 @@ def test_feishu_sink_uploads_screenshot_and_creates_record(tmp_path: Path) -> No
                             {"field_id": "fld-device", "field_name": "Device ID", "type": 1},
                             {"field_id": "fld-event-time", "field_name": "Event Time", "type": 5},
                             {
+                                "field_id": "fld-pet",
+                                "field_name": "Pet Name",
+                                "type": 3,
+                                "property": {
+                                    "options": [
+                                        {"id": "opt-pet-1", "name": "翠饼"},
+                                        {"id": "opt-pet-2", "name": "场长"},
+                                    ],
+                                },
+                                "ui_type": "SingleSelect",
+                            },
+                            {
                                 "field_id": "fld-elimination",
                                 "field_name": "Elimination Type",
-                                "type": 1,
+                                "type": 3,
+                                "property": {
+                                    "options": [
+                                        {"id": "opt-poop", "name": "大便"},
+                                        {"id": "opt-pee", "name": "小便"},
+                                    ],
+                                },
+                                "ui_type": "SingleSelect",
                             },
                             {"field_id": "fld-stool", "field_name": "Stool Score", "type": 1},
                             {
@@ -94,6 +114,10 @@ def test_feishu_sink_uploads_screenshot_and_creates_record(tmp_path: Path) -> No
             payload = request.read().decode("utf-8")
             assert "media-1" in payload
             assert "img-token" in payload
+            assert '"Pet Name":"翠饼"' in payload
+            assert '"Elimination Type":"大便"' in payload
+            assert "翠饼" in payload
+            assert "大便" in payload
             return httpx.Response(
                 200,
                 json={
@@ -119,6 +143,7 @@ def test_feishu_sink_uploads_screenshot_and_creates_record(tmp_path: Path) -> No
                 "media_id": "Media ID",
                 "device_id": "Device ID",
                 "event_time": "Event Time",
+                "pet_name": "Pet Name",
                 "elimination_type": "Elimination Type",
                 "stool_score": "Stool Score",
                 "stool_shape_note": "Stool Shape Note",
@@ -159,6 +184,7 @@ def test_feishu_sink_falls_back_to_existing_chinese_field_names(tmp_path: Path) 
         cover_url="https://example.com/cover.jpg",
         encrypted_download_url="https://example.com/video.mp4",
         source_day="2026-04-09",
+        pet_name="翠饼",
     )
     analysis = AnalysisResult(
         event_time=datetime(2026, 4, 9, 0, 12, 15, tzinfo=UTC),
@@ -203,6 +229,30 @@ def test_feishu_sink_falls_back_to_existing_chinese_field_names(tmp_path: Path) 
                         "items": [
                             {"field_id": "fld-media", "field_name": "eventId", "type": 1},
                             {"field_id": "fld-time", "field_name": "时间", "type": 5},
+                            {
+                                "field_id": "fld-pet",
+                                "field_name": "猫",
+                                "type": 3,
+                                "property": {
+                                    "options": [
+                                        {"id": "opt-pet-1", "name": "翠饼"},
+                                        {"id": "opt-pet-2", "name": "场长"},
+                                    ],
+                                },
+                                "ui_type": "SingleSelect",
+                            },
+                            {
+                                "field_id": "fld-type",
+                                "field_name": "排泄类型",
+                                "type": 3,
+                                "property": {
+                                    "options": [
+                                        {"id": "opt-poop", "name": "大便"},
+                                        {"id": "opt-pee", "name": "小便"},
+                                    ],
+                                },
+                                "ui_type": "SingleSelect",
+                            },
                             {"field_id": "fld-note", "field_name": "大便描述", "type": 1},
                             {"field_id": "fld-shot", "field_name": "大便照片", "type": 17},
                         ],
@@ -214,9 +264,13 @@ def test_feishu_sink_falls_back_to_existing_chinese_field_names(tmp_path: Path) 
             record_payloads.append(payload)
             assert "eventId" in payload
             assert "时间" in payload
+            assert "猫" in payload
+            assert "排泄类型" in payload
             assert "大便描述" in payload
             assert "大便照片" in payload
             assert "Elimination Type" not in payload
+            assert "大便" in payload
+            assert "翠饼" in payload
             return httpx.Response(
                 200,
                 json={
@@ -242,6 +296,7 @@ def test_feishu_sink_falls_back_to_existing_chinese_field_names(tmp_path: Path) 
                 "media_id": "Media ID",
                 "device_id": "Device ID",
                 "event_time": "Event Time",
+                "pet_name": "Pet Name",
                 "elimination_type": "Elimination Type",
                 "stool_score": "Stool Score",
                 "stool_shape_note": "Stool Shape Note",

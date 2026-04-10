@@ -27,6 +27,14 @@ async def _run() -> int:
                         "field_id": field.field_id,
                         "field_name": field.field_name,
                         "type_id": field.type_id,
+                        "ui_type": field.ui_type,
+                        "options": [
+                            {
+                                "id": option.option_id,
+                                "name": option.name,
+                            }
+                            for option in field.options
+                        ],
                     }
                     for field in fields
                 ],

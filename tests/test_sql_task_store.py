@@ -25,6 +25,7 @@ def test_sql_task_store_persists_and_updates_task_lifecycle(tmp_path: Path) -> N
         cover_url="https://example.com/cover.jpg",
         encrypted_download_url="https://example.com/video.mp4",
         source_day="2026-04-09",
+        pet_name="翠饼",
     )
 
     async def run_test() -> None:
@@ -78,6 +79,7 @@ def test_sql_task_store_persists_and_updates_task_lifecycle(tmp_path: Path) -> N
         assert completed_task.raw_summary == "Poop event detected."
         assert fetched is not None
         assert fetched.status == JobStatus.SUCCEEDED
+        assert fetched.media.pet_name == "翠饼"
         assert fetched.event_time is not None
         assert fetched.event_time.tzinfo is not None
         assert len(listed) == 1

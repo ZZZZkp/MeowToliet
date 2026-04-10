@@ -36,6 +36,7 @@ class PetKitMedia:
     cover_url: str | None
     encrypted_download_url: str | None
     source_day: str
+    pet_name: str | None = None
 
     @property
     def dedupe_key(self) -> str:

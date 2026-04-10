@@ -10,8 +10,8 @@ Dockerized dashboard:
 - PetKit login, device discovery, and historical media lookup are working.
 - Temporary video download and decryption are working.
 - `ffmpeg` normalization, duration probing, and screenshot extraction are working.
-- Gemini video analysis with structured JSON output is working.
-- Feishu Bitable record creation with screenshot attachment is working.
+- Gemini video analysis with Chinese structured JSON output and fallback parsing is working.
+- Feishu Bitable record creation with screenshot attachment and single-select field mapping is working.
 - Scheduler media discovery can enqueue deduplicated tasks.
 - Worker execution can advance task state through queued, running, succeeded, and failed.
 - Dashboard and `/api/dashboard` now read from a shared task snapshot flow.
@@ -25,7 +25,7 @@ Dockerized dashboard:
 1. Login to PetKit and keep the session alive.
 2. Poll two litter boxes for new media metadata.
 3. Download media only when needed into a temporary workspace.
-4. Decode video, ask Gemini for elimination details, and capture a screenshot.
+4. Decode video, ask Gemini for elimination details in Chinese, and capture a screenshot.
 5. Delete temporary media after the result and screenshot are persisted.
 6. Sync structured data and the screenshot into Feishu Bitable.
 
@@ -33,8 +33,8 @@ Dockerized dashboard:
 
 - `src/meow_toilet/adapters/petkit.py`: PetKit adapter and historical-media probe support.
 - `src/meow_toilet/adapters/video.py`: `ffmpeg` and `ffprobe` based media processing.
-- `src/meow_toilet/adapters/gemini.py`: Gemini Files API upload and structured output parsing.
-- `src/meow_toilet/adapters/feishu.py`: Feishu tenant token, image upload, and Bitable record creation.
+- `src/meow_toilet/adapters/gemini.py`: Gemini Files API upload, Chinese prompt control, and tolerant structured output parsing.
+- `src/meow_toilet/adapters/feishu.py`: Feishu tenant token, image upload, field discovery, and type-aware Bitable record creation.
 - `src/meow_toilet/services/dashboard.py`: dashboard snapshot building and runtime cover-image delivery.
 - `src/meow_toilet/services/sql_task_store.py`: persistent task storage backed by PostgreSQL or SQLite fallback.
 - `src/meow_toilet/services/operations.py`: manual poll and retry actions exposed by the dashboard.
@@ -92,6 +92,7 @@ The current Bitable fields discovered from the configured table are:
 - `eventId`
 - `时间`
 - `猫`
+- `排泄类型`
 - `大便描述`
 - `大便照片`
 
@@ -100,22 +101,37 @@ The current successful write path uses these mappings:
 ```env
 FEISHU_FIELD_MEDIA_ID=eventId
 FEISHU_FIELD_EVENT_TIME=时间
+FEISHU_FIELD_PET_NAME=猫
+FEISHU_FIELD_ELIMINATION_TYPE=排泄类型
 FEISHU_FIELD_STOOL_SHAPE_NOTE=大便描述
 FEISHU_FIELD_SCREENSHOT=大便照片
 ```
 
-Other Feishu field mappings can stay empty until matching columns are added to the table.
+Live field type inspection currently returns:
+
+- `eventId`: `Text`
+- `时间`: `Text`
+- `猫`: `SingleSelect` with options `翠饼 / 酥酥 / 场长`
+- `排泄类型`: `SingleSelect` with options `大便 / 小便`
+- `大便描述`: `Text`
+- `大便照片`: `Attachment`
+
+If you want to persist ambiguous Gemini results directly in Feishu, add a `看不清` option to `排泄类型`; otherwise the adapter will leave that single-select blank and keep the detail in `大便描述` or `raw_summary`.
 
 ## Latest validated outcomes
 
 - PetKit sample media probe succeeded for `2026-04-09`.
 - Media processing probe succeeded and produced a screenshot from media `105874_1775664690`.
-- Gemini probe succeeded and returned structured stool analysis for media `105874_1775664690`.
-- Feishu probe succeeded and created record `recvghw46rGWBG`.
+- Gemini probe succeeded and returned Chinese structured analysis for media `105874_1775664690`.
+- Dockerized `phase0_feishu` succeeded for `2026-04-10`, created record `recvgnGuboHj1b`, and wrote:
+  - `eventId=105874_1775763951`
+  - `时间=2026-04-10T03:46:24.500000+08:00`
+  - `猫=翠饼`
+  - `排泄类型=小便`
 - Docker dashboard can render recent queue items and return decrypted PetKit preview JPEGs such as
   `108228:108228_1775777657`.
 - Failed tasks can be retried from the dashboard even after the original in-memory media cache is gone.
-- Feishu writes can resolve real table field names via configured names plus Chinese or English aliases.
+- Feishu writes can resolve real table field names via configured names plus Chinese or English aliases, and can map single-select values to live option names.
 
 ## Next priorities
 

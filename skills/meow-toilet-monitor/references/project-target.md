@@ -13,7 +13,7 @@ Build a Python service that:
 1. Logs in to PetKit and maintains session health safely.
 2. Polls two litter boxes for new media metadata and cover images.
 3. Downloads encrypted video into a temporary workspace only when needed.
-4. Decodes the video, sends it to Gemini, extracts elimination time and stool details, captures a screenshot at the detected event second, and removes the temporary video files.
+4. Decodes the video, sends it to Gemini, extracts elimination time and Chinese elimination details, captures a screenshot at the detected event second, and removes the temporary video files.
 5. Writes screenshot and structured results into Feishu Bitable.
 6. Provides a lightweight dashboard for device health, cover image browsing, job state, and replay or retry actions.
 
@@ -40,8 +40,8 @@ Build a Python service that:
 ### Phase 2
 
 - Integrate Gemini and Feishu adapters with retries, idempotency, and debugging views.
+- Ensure Feishu syncing can handle single-select pet names and elimination types using live option names.
 
 ### Phase 3
 
 - Harden operations, add replay tools, and improve the dashboard experience.
-

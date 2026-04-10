@@ -101,7 +101,14 @@ class PetKitApiAdapter:
             for media_cloud in media_items:
                 if media_cloud.video is None:
                     continue
-                mapped_media = self._map_media_cloud(media_cloud, source_day)
+                mapped_media = self._map_media_cloud(
+                    media_cloud,
+                    source_day,
+                    pet_name=self._resolve_pet_name_for_media(
+                        media_cloud=media_cloud,
+                        records=entity.device_records or [],
+                    ),
+                )
                 self._media_cache[mapped_media.dedupe_key] = media_cloud
                 result.append(mapped_media)
             result.sort(key=lambda item: item.started_at)
@@ -194,7 +201,14 @@ class PetKitApiAdapter:
         for media_cloud in media_items:
             if media_cloud.video is None:
                 continue
-            mapped_media = self._map_media_cloud(media_cloud, media.source_day)
+            mapped_media = self._map_media_cloud(
+                media_cloud,
+                media.source_day,
+                pet_name=self._resolve_pet_name_for_media(
+                    media_cloud=media_cloud,
+                    records=entity.device_records or [],
+                ),
+            )
             self._media_cache[mapped_media.dedupe_key] = media_cloud
             if mapped_media.dedupe_key == media.dedupe_key:
                 matched_media = media_cloud
@@ -354,7 +368,13 @@ class PetKitApiAdapter:
             household_id=str(household_id),
         )
 
-    def _map_media_cloud(self, media_cloud: MediaCloud, source_day: str) -> PetKitMedia:
+    def _map_media_cloud(
+        self,
+        media_cloud: MediaCloud,
+        source_day: str,
+        *,
+        pet_name: str | None = None,
+    ) -> PetKitMedia:
         started_at = datetime.fromtimestamp(
             media_cloud.timestamp,
             tz=ZoneInfo(self._timezone_name),
@@ -366,7 +386,24 @@ class PetKitApiAdapter:
             cover_url=media_cloud.image,
             encrypted_download_url=media_cloud.video,
             source_day=source_day,
+            pet_name=pet_name,
         )
+
+    @staticmethod
+    def _resolve_pet_name_for_media(
+        *,
+        media_cloud: MediaCloud,
+        records: list[LitterRecord],
+    ) -> str | None:
+        for record in records:
+            if getattr(record, "timestamp", None) != media_cloud.timestamp:
+                continue
+            pet_name = getattr(record, "pet_name", None)
+            if isinstance(pet_name, str):
+                stripped = pet_name.strip()
+                if stripped:
+                    return stripped
+        return None
 
     def _build_historical_record_params(
         self,

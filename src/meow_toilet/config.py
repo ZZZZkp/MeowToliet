@@ -103,6 +103,9 @@ class Settings:
     feishu_field_event_time: str = field(
         default_factory=lambda: _read_str("FEISHU_FIELD_EVENT_TIME", "Event Time"),
     )
+    feishu_field_pet_name: str = field(
+        default_factory=lambda: _read_str("FEISHU_FIELD_PET_NAME", "Pet Name"),
+    )
     feishu_field_elimination_type: str = field(
         default_factory=lambda: _read_str("FEISHU_FIELD_ELIMINATION_TYPE", "Elimination Type"),
     )
@@ -184,6 +187,7 @@ class Settings:
             "media_id": self.feishu_field_media_id,
             "device_id": self.feishu_field_device_id,
             "event_time": self.feishu_field_event_time,
+            "pet_name": self.feishu_field_pet_name,
             "elimination_type": self.feishu_field_elimination_type,
             "stool_score": self.feishu_field_stool_score,
             "stool_shape_note": self.feishu_field_stool_shape_note,
