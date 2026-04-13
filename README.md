@@ -112,11 +112,11 @@ Live field type inspection currently returns:
 - `eventId`: `Text`
 - `时间`: `Text`
 - `猫`: `SingleSelect` with options `翠饼 / 酥酥 / 场长`
-- `排泄类型`: `SingleSelect` with options `大便 / 小便`
+- `排泄类型`: `SingleSelect` with options `大便 / 小便 / 看不清`
 - `大便描述`: `Text`
 - `大便照片`: `Attachment`
 
-If you want to persist ambiguous Gemini results directly in Feishu, add a `看不清` option to `排泄类型`; otherwise the adapter will leave that single-select blank and keep the detail in `大便描述` or `raw_summary`.
+Ambiguous Gemini results now map directly to the `看不清` single-select option in `排泄类型`.
 
 ## Latest validated outcomes
 

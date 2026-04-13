@@ -320,3 +320,143 @@ def test_feishu_sink_falls_back_to_existing_chinese_field_names(tmp_path: Path) 
         assert len(record_payloads) == 1
 
     asyncio.run(run_test())
+
+
+def test_feishu_sink_maps_unknown_elimination_type_to_unclear_single_select(
+    tmp_path: Path,
+) -> None:
+    screenshot_path = tmp_path / "event.jpg"
+    screenshot_path.write_bytes(b"fake-image")
+    media = PetKitMedia(
+        id="media-unknown",
+        device_id="device-1",
+        started_at=datetime(2026, 4, 9, 0, 11, 30, tzinfo=UTC),
+        cover_url="https://example.com/cover.jpg",
+        encrypted_download_url="https://example.com/video.mp4",
+        source_day="2026-04-09",
+        pet_name="翠饼",
+    )
+    analysis = AnalysisResult(
+        event_time=datetime(2026, 4, 9, 0, 12, 15, tzinfo=UTC),
+        event_offset_seconds=45.0,
+        elimination_type=EliminationType.UNKNOWN,
+        stool_score=None,
+        stool_shape_note="看不清",
+        confidence=0.42,
+        raw_summary="画面遮挡严重，无法稳定判断排泄类型。",
+    )
+    screenshot = ScreenshotArtifact(path=screenshot_path, captured_at=analysis.event_time)
+    record_payloads: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/v3/tenant_access_token/internal"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "tenant_access_token": "tenant-token",
+                },
+            )
+        if request.url.path.endswith("/drive/v1/medias/upload_all"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "file_token": "img-token",
+                    },
+                },
+            )
+        if request.url.path.endswith("/bitable/v1/apps/app-token/tables/tbl123/fields"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "items": [
+                            {"field_id": "fld-media", "field_name": "eventId", "type": 1},
+                            {"field_id": "fld-time", "field_name": "时间", "type": 1},
+                            {
+                                "field_id": "fld-pet",
+                                "field_name": "猫",
+                                "type": 3,
+                                "property": {
+                                    "options": [
+                                        {"id": "opt-pet-1", "name": "翠饼"},
+                                    ],
+                                },
+                                "ui_type": "SingleSelect",
+                            },
+                            {
+                                "field_id": "fld-type",
+                                "field_name": "排泄类型",
+                                "type": 3,
+                                "property": {
+                                    "options": [
+                                        {"id": "opt-poop", "name": "大便"},
+                                        {"id": "opt-pee", "name": "小便"},
+                                        {"id": "opt-unknown", "name": "看不清"},
+                                    ],
+                                },
+                                "ui_type": "SingleSelect",
+                            },
+                            {"field_id": "fld-note", "field_name": "大便描述", "type": 1},
+                            {"field_id": "fld-shot", "field_name": "大便照片", "type": 17},
+                        ],
+                    },
+                },
+            )
+        if request.url.path.endswith("/bitable/v1/apps/app-token/tables/tbl123/records"):
+            payload = request.read().decode("utf-8")
+            record_payloads.append(payload)
+            assert '"排泄类型":"看不清"' in payload
+            assert '"大便描述":"看不清"' in payload
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "record": {
+                            "record_id": "rec-unknown",
+                        },
+                    },
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    transport = httpx.MockTransport(handler)
+
+    async def run_test() -> None:
+        sink = FeishuBitableSink(
+            app_id="cli_app",
+            app_secret="secret",
+            app_token="app-token",
+            table_id="tbl123",
+            field_mapping={
+                "media_id": "Media ID",
+                "device_id": "Device ID",
+                "event_time": "Event Time",
+                "pet_name": "Pet Name",
+                "elimination_type": "Elimination Type",
+                "stool_score": "Stool Score",
+                "stool_shape_note": "Stool Shape Note",
+                "confidence": "Confidence",
+                "raw_summary": "Raw Summary",
+                "screenshot": "Screenshot",
+                "source_day": "Source Day",
+            },
+            client=httpx.AsyncClient(transport=transport, timeout=10.0),
+        )
+        try:
+            record_id = await sink.upsert_event(
+                media=media,
+                analysis=analysis,
+                screenshot=screenshot,
+            )
+        finally:
+            await sink.aclose()
+
+        assert record_id == "rec-unknown"
+        assert len(record_payloads) == 1
+
+    asyncio.run(run_test())

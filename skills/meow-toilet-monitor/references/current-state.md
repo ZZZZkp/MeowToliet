@@ -50,11 +50,11 @@ FEISHU_FIELD_SCREENSHOT=大便照片
 - `eventId`: `Text`
 - `时间`: `Text`
 - `猫`: `SingleSelect` with `翠饼 / 酥酥 / 场长`
-- `排泄类型`: `SingleSelect` with `大便 / 小便`
+- `排泄类型`: `SingleSelect` with `大便 / 小便 / 看不清`
 - `大便描述`: `Text`
 - `大便照片`: `Attachment`
 
-Leave the other Feishu field mapping variables empty until matching columns exist. If the team wants to persist ambiguous detections directly in the single-select, add a `看不清` option to `排泄类型`.
+Leave the other Feishu field mapping variables empty until matching columns exist. Ambiguous detections now map directly into the `看不清` single-select option in `排泄类型`.
 
 ## Latest real results
 
