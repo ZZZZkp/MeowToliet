@@ -49,6 +49,8 @@ class FeishuSink(Protocol):
         media: PetKitMedia,
         analysis: AnalysisResult,
         screenshot: ScreenshotArtifact,
+        *,
+        existing_record_id: str | None = None,
     ) -> str | None: ...
 
 

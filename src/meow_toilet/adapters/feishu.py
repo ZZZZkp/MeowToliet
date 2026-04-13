@@ -99,6 +99,8 @@ class FeishuBitableSink:
         media: PetKitMedia,
         analysis: AnalysisResult,
         screenshot: ScreenshotArtifact,
+        *,
+        existing_record_id: str | None = None,
     ) -> str | None:
         tenant_token = await self._get_tenant_access_token()
         resolved_mapping = await self._resolve_field_mapping(tenant_access_token=tenant_token)
@@ -113,6 +115,17 @@ class FeishuBitableSink:
             mapping=resolved_mapping,
             screenshot_token=screenshot_upload.file_token,
         )
+        record_id = existing_record_id or await self._find_existing_record_id(
+            media_id=media.id,
+            media_field=resolved_mapping.get("media_id"),
+            tenant_access_token=tenant_token,
+        )
+        if record_id is not None:
+            return await self._update_record(
+                record_id=record_id,
+                fields=fields,
+                tenant_access_token=tenant_token,
+            )
         return await self._create_record(fields=fields, tenant_access_token=tenant_token)
 
     async def _get_tenant_access_token(self) -> str:
@@ -259,6 +272,107 @@ class FeishuBitableSink:
                 response=response,
             )
         return str(payload["data"]["record"]["record_id"])
+
+    async def _update_record(
+        self,
+        *,
+        record_id: str,
+        fields: dict[str, Any],
+        tenant_access_token: str,
+    ) -> str:
+        response = await self._request(
+            operation="update_record",
+            method="PUT",
+            url=(
+                f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
+                f"{self._app_token}/tables/{self._table_id}/records/{record_id}"
+            ),
+            headers={
+                "Authorization": f"Bearer {tenant_access_token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={"fields": fields},
+        )
+        payload = self._parse_json_response(response, operation="update_record")
+        if payload.get("code") != 0:
+            raise self._business_error(
+                operation="update_record",
+                payload=payload,
+                response=response,
+            )
+        return str(payload.get("data", {}).get("record", {}).get("record_id") or record_id)
+
+    async def _find_existing_record_id(
+        self,
+        *,
+        media_id: str,
+        media_field: FeishuField | None,
+        tenant_access_token: str,
+    ) -> str | None:
+        if media_field is None:
+            return None
+
+        page_token: str | None = None
+        while True:
+            response = await self._request(
+                operation="list_records",
+                method="GET",
+                url=(
+                    f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
+                    f"{self._app_token}/tables/{self._table_id}/records"
+                ),
+                headers={
+                    "Authorization": f"Bearer {tenant_access_token}",
+                },
+                params={
+                    "page_size": 200,
+                    **({"page_token": page_token} if page_token else {}),
+                },
+            )
+            payload = self._parse_json_response(response, operation="list_records")
+            if payload.get("code") != 0:
+                raise self._business_error(
+                    operation="list_records",
+                    payload=payload,
+                    response=response,
+                )
+            data = payload.get("data", {})
+            items = data.get("items", [])
+            if not isinstance(items, list):
+                raise self._format_error(
+                    operation="list_records",
+                    message="Feishu record list did not include a valid items array.",
+                    response=response,
+                )
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                fields = item.get("fields")
+                if not isinstance(fields, dict):
+                    continue
+                if self._field_matches_media_id(fields=fields, media_field=media_field, media_id=media_id):
+                    record_id = item.get("record_id")
+                    if record_id:
+                        return str(record_id)
+            if not data.get("has_more"):
+                return None
+            next_page_token = data.get("page_token")
+            if not next_page_token:
+                return None
+            page_token = str(next_page_token)
+
+    @staticmethod
+    def _field_matches_media_id(
+        *,
+        fields: dict[str, Any],
+        media_field: FeishuField,
+        media_id: str,
+    ) -> bool:
+        candidate_values = (
+            fields.get(media_field.field_name),
+            fields.get(media_field.field_id),
+        )
+        return any(str(value) == media_id for value in candidate_values if value is not None)
 
     async def _request(
         self,

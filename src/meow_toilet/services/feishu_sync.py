@@ -34,4 +34,9 @@ class FeishuSyncService:
             path=screenshot_path,
             captured_at=task.event_time,
         )
-        return await self._feishu.upsert_event(task.media, analysis, screenshot)
+        return await self._feishu.upsert_event(
+            task.media,
+            analysis,
+            screenshot,
+            existing_record_id=task.feishu_record_id,
+        )
