@@ -6,12 +6,15 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 import httpx
+import structlog
 
 from meow_toilet.config import Settings
 from meow_toilet.domain.entities import AnalysisResult, EliminationType, PetKitMedia
+from meow_toilet.errors import ExternalServiceError
 
 GEMINI_FILE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -93,6 +96,7 @@ class GeminiAnalyzer:
         self._owns_client = client is None
         self._poll_interval_seconds = poll_interval_seconds
         self._processing_timeout_seconds = processing_timeout_seconds
+        self._logger = structlog.get_logger(__name__).bind(service="gemini", model=model)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> GeminiAnalyzer:
@@ -115,7 +119,13 @@ class GeminiAnalyzer:
             active_file = await self._wait_until_active(uploaded_file.name)
             payload = await self._generate_structured_response(active_file)
         finally:
-            await self._delete_file(uploaded_file.name)
+            try:
+                await self._delete_file(uploaded_file.name)
+            except ExternalServiceError:
+                self._logger.warning(
+                    "gemini_file_delete_failed",
+                    file_name=uploaded_file.name,
+                )
         return self._payload_to_result(payload, media)
 
     async def _upload_file(self, video_path: Path) -> UploadedGeminiFile:
@@ -124,8 +134,10 @@ class GeminiAnalyzer:
                 "display_name": video_path.name,
             },
         }
-        start_response = await self._client.post(
-            f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={self._api_key}",
+        start_response = await self._request(
+            operation="upload_start",
+            method="POST",
+            url=f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={self._api_key}",
             headers={
                 "X-Goog-Upload-Protocol": "resumable",
                 "X-Goog-Upload-Command": "start",
@@ -135,13 +147,17 @@ class GeminiAnalyzer:
             },
             json=metadata,
         )
-        start_response.raise_for_status()
         upload_url = start_response.headers.get("X-Goog-Upload-URL")
         if not upload_url:
-            raise ValueError("Gemini upload start response did not include X-Goog-Upload-URL.")
+            raise self._format_error(
+                operation="upload_start",
+                message="Gemini upload start response did not include X-Goog-Upload-URL.",
+            )
 
-        finalize_response = await self._client.post(
-            upload_url,
+        finalize_response = await self._request(
+            operation="upload_finalize",
+            method="POST",
+            url=upload_url,
             headers={
                 "Content-Length": str(video_path.stat().st_size),
                 "X-Goog-Upload-Offset": "0",
@@ -149,24 +165,36 @@ class GeminiAnalyzer:
             },
             content=video_path.read_bytes(),
         )
-        finalize_response.raise_for_status()
-        return self._parse_uploaded_file(self._unwrap_file_payload(finalize_response.json()))
+        payload = self._parse_json_response(finalize_response, operation="upload_finalize")
+        return self._parse_uploaded_file(self._unwrap_file_payload(payload))
 
     async def _wait_until_active(self, file_name: str) -> UploadedGeminiFile:
         deadline = asyncio.get_running_loop().time() + self._processing_timeout_seconds
         while True:
-            response = await self._client.get(
-                f"https://generativelanguage.googleapis.com/v1beta/{file_name}?key={self._api_key}",
+            response = await self._request(
+                operation="file_status",
+                method="GET",
+                url=f"https://generativelanguage.googleapis.com/v1beta/{file_name}?key={self._api_key}",
             )
-            response.raise_for_status()
-            file_data = self._parse_uploaded_file(self._unwrap_file_payload(response.json()))
+            file_data = self._parse_uploaded_file(
+                self._unwrap_file_payload(
+                    self._parse_json_response(response, operation="file_status"),
+                ),
+            )
             if file_data.state == "ACTIVE":
                 return file_data
             if file_data.state == "FAILED":
-                raise RuntimeError(f"Gemini file processing failed for {file_name}.")
+                raise self._format_error(
+                    operation="file_status",
+                    message=f"Gemini file processing failed for {file_name}.",
+                )
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(
-                    f"Timed out waiting for Gemini file {file_name} to become ACTIVE.",
+                raise ExternalServiceError(
+                    service="gemini",
+                    operation="file_status",
+                    kind="timeout",
+                    retryable=True,
+                    message=f"Timed out waiting for Gemini file {file_name} to become ACTIVE.",
                 )
             await asyncio.sleep(self._poll_interval_seconds)
 
@@ -174,8 +202,13 @@ class GeminiAnalyzer:
         self,
         uploaded_file: UploadedGeminiFile,
     ) -> dict[str, Any]:
-        response = await self._client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent?key={self._api_key}",
+        response = await self._request(
+            operation="generate_content",
+            method="POST",
+            url=(
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{self._model}:generateContent?key={self._api_key}"
+            ),
             json={
                 "contents": [
                     {
@@ -198,21 +231,182 @@ class GeminiAnalyzer:
                 },
             },
         )
-        response.raise_for_status()
-        candidates = response.json().get("candidates", [])
+        payload = self._parse_json_response(response, operation="generate_content")
+        candidates = payload.get("candidates", [])
         if not candidates:
-            raise ValueError("Gemini returned no candidates.")
+            raise self._format_error(
+                operation="generate_content",
+                message="Gemini returned no candidates.",
+                response=response,
+            )
         parts = candidates[0].get("content", {}).get("parts", [])
         texts = [part.get("text", "") for part in parts if part.get("text")]
         if not texts:
-            raise ValueError("Gemini candidate did not include JSON text.")
-        return self._parse_model_payload("".join(texts))
+            raise self._format_error(
+                operation="generate_content",
+                message="Gemini candidate did not include JSON text.",
+                response=response,
+            )
+        try:
+            return self._parse_model_payload("".join(texts))
+        except ValueError as exc:
+            raise self._format_error(
+                operation="generate_content",
+                message=str(exc),
+                response=response,
+            ) from exc
 
     async def _delete_file(self, file_name: str) -> None:
-        response = await self._client.delete(
-            f"https://generativelanguage.googleapis.com/v1beta/{file_name}?key={self._api_key}",
+        await self._request(
+            operation="delete_file",
+            method="DELETE",
+            url=f"https://generativelanguage.googleapis.com/v1beta/{file_name}?key={self._api_key}",
         )
-        response.raise_for_status()
+
+    async def _request(
+        self,
+        *,
+        operation: str,
+        method: str,
+        url: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        started = time.perf_counter()
+        try:
+            response = await self._client.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response
+        except httpx.TimeoutException as exc:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            self._logger.warning(
+                "external_request_timeout",
+                operation=operation,
+                elapsed_ms=elapsed_ms,
+                url=url,
+                error=str(exc),
+            )
+            raise ExternalServiceError(
+                service="gemini",
+                operation=operation,
+                kind="timeout",
+                retryable=True,
+                message="Gemini request timed out.",
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
+            status_code = response.status_code
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            request_id = self._extract_request_id(response)
+            response_excerpt = self._response_excerpt(response)
+            retryable = status_code == 429 or status_code >= 500
+            kind = "rate_limit" if status_code == 429 else "http_status"
+            self._logger.warning(
+                "external_request_failed",
+                operation=operation,
+                elapsed_ms=elapsed_ms,
+                url=str(response.request.url),
+                status_code=status_code,
+                request_id=request_id,
+                retry_after=response.headers.get("Retry-After"),
+                response_excerpt=response_excerpt,
+            )
+            raise ExternalServiceError(
+                service="gemini",
+                operation=operation,
+                kind=kind,
+                retryable=retryable,
+                message="Gemini request failed.",
+                status_code=status_code,
+                request_id=request_id,
+            ) from exc
+        except httpx.RequestError as exc:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            self._logger.warning(
+                "external_request_error",
+                operation=operation,
+                elapsed_ms=elapsed_ms,
+                url=url,
+                error=str(exc),
+            )
+            raise ExternalServiceError(
+                service="gemini",
+                operation=operation,
+                kind="network",
+                retryable=True,
+                message="Gemini request failed before receiving a response.",
+            ) from exc
+
+    def _parse_json_response(
+        self,
+        response: httpx.Response,
+        *,
+        operation: str,
+    ) -> dict[str, Any]:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise self._format_error(
+                operation=operation,
+                message="Gemini returned invalid JSON.",
+                response=response,
+            ) from exc
+        if not isinstance(payload, dict):
+            raise self._format_error(
+                operation=operation,
+                message="Gemini returned a non-object JSON payload.",
+                response=response,
+            )
+        return payload
+
+    def _format_error(
+        self,
+        *,
+        operation: str,
+        message: str,
+        response: httpx.Response | None = None,
+    ) -> ExternalServiceError:
+        request_id = None if response is None else self._extract_request_id(response)
+        if response is not None:
+            self._logger.warning(
+                "external_response_format_error",
+                operation=operation,
+                status_code=response.status_code,
+                request_id=request_id,
+                response_excerpt=self._response_excerpt(response),
+                error=message,
+            )
+        else:
+            self._logger.warning(
+                "external_response_format_error",
+                operation=operation,
+                error=message,
+            )
+        return ExternalServiceError(
+            service="gemini",
+            operation=operation,
+            kind="response_format",
+            retryable=True,
+            message=message,
+            status_code=None if response is None else response.status_code,
+            request_id=request_id,
+        )
+
+    @staticmethod
+    def _extract_request_id(response: httpx.Response) -> str | None:
+        for header_name in ("x-request-id", "x-goog-request-id", "x-cloud-trace-context"):
+            if response.headers.get(header_name):
+                return response.headers[header_name]
+        return None
+
+    @staticmethod
+    def _response_excerpt(response: httpx.Response, limit: int = 400) -> str | None:
+        try:
+            text = response.text.strip()
+        except Exception:
+            return None
+        if not text:
+            return None
+        return text[:limit]
 
     @staticmethod
     def _parse_uploaded_file(payload: dict[str, Any]) -> UploadedGeminiFile:

@@ -28,6 +28,7 @@ class InMemoryMediaTaskStore:
                 status=JobStatus.QUEUED,
                 discovered_at=discovered_at,
                 updated_at=discovered_at,
+                next_attempt_at=discovered_at,
             )
             self._tasks[task.id] = task
             return task, True
@@ -39,8 +40,9 @@ class InMemoryMediaTaskStore:
                     task
                     for task in self._tasks.values()
                     if task.status == JobStatus.QUEUED
+                    and (task.next_attempt_at is None or task.next_attempt_at <= started_at)
                 ),
-                key=lambda task: (task.discovered_at, task.id),
+                key=lambda task: (task.next_attempt_at or task.discovered_at, task.discovered_at, task.id),
             )
             if not queued_tasks:
                 return None
@@ -62,6 +64,8 @@ class InMemoryMediaTaskStore:
             updated_at=started_at,
             attempts=task.attempts + 1,
             last_error=None,
+            last_error_kind=None,
+            next_attempt_at=None,
         )
         self._tasks[task.id] = updated
         return updated
@@ -87,19 +91,31 @@ class InMemoryMediaTaskStore:
                 confidence=outcome.analysis.confidence,
                 raw_summary=outcome.analysis.raw_summary,
                 last_error=None,
+                last_error_kind=None,
+                next_attempt_at=None,
             )
             self._tasks[task_id] = updated
             return updated
 
-    async def mark_failed(self, task_id: str, failed_at: datetime, error: str) -> MediaTask:
+    async def mark_failed(
+        self,
+        task_id: str,
+        failed_at: datetime,
+        error: str,
+        *,
+        error_kind: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> MediaTask:
         async with self._lock:
             task = self._tasks[task_id]
             updated = replace(
                 task,
-                status=JobStatus.FAILED,
+                status=JobStatus.QUEUED if next_attempt_at is not None else JobStatus.FAILED,
                 updated_at=failed_at,
                 finished_at=failed_at,
                 last_error=error,
+                last_error_kind=error_kind,
+                next_attempt_at=next_attempt_at,
             )
             self._tasks[task_id] = updated
             return updated

@@ -17,6 +17,7 @@ from meow_toilet.domain.entities import (
 )
 from meow_toilet.scheduler.service import SchedulerHeartbeat
 from meow_toilet.services.dashboard import DashboardMediaService, DashboardSnapshotService
+from meow_toilet.services.retries import RetryPolicy
 from meow_toilet.services.task_store import InMemoryMediaTaskStore
 from meow_toilet.workers.jobs import MediaJobWorker
 
@@ -69,6 +70,7 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
         worker = MediaJobWorker(
             task_store=task_store,
             pipeline=SuccessfulPipeline(),
+            retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
             now_provider=lambda: next(clock),
         )
         await worker.process_next_job()

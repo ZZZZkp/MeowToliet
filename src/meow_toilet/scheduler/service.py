@@ -10,8 +10,11 @@ from datetime import UTC, datetime
 from meow_toilet.adapters.petkit import PetKitApiAdapter
 from meow_toilet.config import get_settings
 from meow_toilet.domain.entities import SchedulerPollResult
-from meow_toilet.runtime import create_job_dispatcher, create_task_store
+from meow_toilet.observability import configure_logging
+from meow_toilet.runtime import create_job_dispatcher
 from meow_toilet.services.interfaces import JobDispatcher, MediaTaskStore, PetKitGateway
+from meow_toilet.services.sql_task_store import SqlAlchemyMediaTaskStore
+import structlog
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,10 +90,12 @@ class PetKitPollingScheduler:
 
 
 async def _run_cli(args: argparse.Namespace) -> int:
+    configure_logging()
     settings = get_settings()
-    task_store = create_task_store(settings)
+    task_store = SqlAlchemyMediaTaskStore(settings.database_url)
     dispatcher = create_job_dispatcher(settings)
     petkit = PetKitApiAdapter.from_settings(settings)
+    logger = structlog.get_logger(__name__)
     scheduler = PetKitPollingScheduler(
         petkit=petkit,
         task_store=task_store,
@@ -100,9 +105,13 @@ async def _run_cli(args: argparse.Namespace) -> int:
     try:
         if args.loop:
             while True:
-                result = await scheduler.poll(source_day=args.source_day)
-                _print_result(result)
+                try:
+                    result = await scheduler.poll(source_day=args.source_day)
+                    _print_result(result)
+                except Exception:
+                    logger.exception("scheduler_poll_iteration_failed")
                 await asyncio.sleep(settings.petkit_poll_interval_seconds)
+            raise AssertionError("Unreachable scheduler loop exit.")
         else:
             result = await scheduler.poll(source_day=args.source_day)
     finally:

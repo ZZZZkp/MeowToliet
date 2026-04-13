@@ -136,6 +136,18 @@ class Settings:
     max_concurrent_analyses: int = field(
         default_factory=lambda: _read_int("MAX_CONCURRENT_ANALYSES", 2),
     )
+    worker_retry_max_attempts: int = field(
+        default_factory=lambda: _read_int("WORKER_RETRY_MAX_ATTEMPTS", 5),
+    )
+    worker_retry_backoff_seconds: int = field(
+        default_factory=lambda: _read_int("WORKER_RETRY_BACKOFF_SECONDS", 30),
+    )
+    worker_retry_max_backoff_seconds: int = field(
+        default_factory=lambda: _read_int("WORKER_RETRY_MAX_BACKOFF_SECONDS", 900),
+    )
+    worker_idle_sleep_seconds: int = field(
+        default_factory=lambda: _read_int("WORKER_IDLE_SLEEP_SECONDS", 5),
+    )
 
     @property
     def petkit_credentials_configured(self) -> bool:
@@ -179,6 +191,10 @@ class Settings:
             "temp_media_root": str(self.temp_media_root),
             "max_concurrent_decodes": self.max_concurrent_decodes,
             "max_concurrent_analyses": self.max_concurrent_analyses,
+            "worker_retry_max_attempts": self.worker_retry_max_attempts,
+            "worker_retry_backoff_seconds": self.worker_retry_backoff_seconds,
+            "worker_retry_max_backoff_seconds": self.worker_retry_max_backoff_seconds,
+            "worker_idle_sleep_seconds": self.worker_idle_sleep_seconds,
         }
 
     @property

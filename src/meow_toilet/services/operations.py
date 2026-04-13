@@ -11,6 +11,7 @@ from meow_toilet.domain.entities import MediaTask, SchedulerPollResult
 from meow_toilet.scheduler.service import PetKitPollingScheduler
 from meow_toilet.services.interfaces import JobDispatcher, MediaTaskStore
 from meow_toilet.services.pipeline import LitterEventPipeline
+from meow_toilet.services.retries import RetryPolicy
 from meow_toilet.services.temp_files import TemporaryMediaStore
 from meow_toilet.workers.jobs import MediaJobWorker
 
@@ -69,7 +70,16 @@ class ManualOperationsService:
             feishu=feishu,
             temp_store=TemporaryMediaStore(settings.temp_media_root),
         )
-        return MediaJobWorker(task_store=self._task_store, pipeline=pipeline), (
+        retry_policy = RetryPolicy(
+            max_attempts=settings.worker_retry_max_attempts,
+            backoff_seconds=settings.worker_retry_backoff_seconds,
+            max_backoff_seconds=settings.worker_retry_max_backoff_seconds,
+        )
+        return MediaJobWorker(
+            task_store=self._task_store,
+            pipeline=pipeline,
+            retry_policy=retry_policy,
+        ), (
             petkit,
             analyzer,
             feishu,

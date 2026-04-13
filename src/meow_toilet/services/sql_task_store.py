@@ -33,7 +33,10 @@ class MediaTaskRecord(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, index=True)
     attempts = Column(Integer(), nullable=False, default=0)
     last_error = Column(Text(), nullable=True)
+    last_error_kind = Column(String(64), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_attempt_started_at = Column(DateTime(timezone=True), nullable=True)
     feishu_record_id = Column(String(255), nullable=True)
     event_time = Column(DateTime(timezone=True), nullable=True)
     elimination_type = Column(String(32), nullable=True)
@@ -69,6 +72,7 @@ class SqlAlchemyMediaTaskStore:
                     status=JobStatus.QUEUED.value,
                     discovered_at=discovered_at,
                     updated_at=discovered_at,
+                    next_attempt_at=discovered_at,
                 )
                 session.add(record)
                 session.flush()
@@ -98,8 +102,17 @@ class SqlAlchemyMediaTaskStore:
             record = session.execute(
                 select(MediaTaskRecord)
                 .where(MediaTaskRecord.status == JobStatus.QUEUED.value)
-                .order_by(MediaTaskRecord.discovered_at.asc(), MediaTaskRecord.id.asc())
+                .where(
+                    (MediaTaskRecord.next_attempt_at.is_(None))
+                    | (MediaTaskRecord.next_attempt_at <= started_at),
+                )
+                .order_by(
+                    MediaTaskRecord.next_attempt_at.asc().nullsfirst(),
+                    MediaTaskRecord.discovered_at.asc(),
+                    MediaTaskRecord.id.asc(),
+                )
                 .limit(1),
+                execution_options={"populate_existing": True},
             ).scalar_one_or_none()
             if record is None:
                 return None
@@ -130,15 +143,25 @@ class SqlAlchemyMediaTaskStore:
             session.refresh(record)
             return self._to_task(record)
 
-    async def mark_failed(self, task_id: str, failed_at: datetime, error: str) -> MediaTask:
+    async def mark_failed(
+        self,
+        task_id: str,
+        failed_at: datetime,
+        error: str,
+        *,
+        error_kind: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> MediaTask:
         with self._session_factory.begin() as session:
             record = session.get(MediaTaskRecord, task_id)
             if record is None:
                 raise KeyError(f"Unknown task {task_id}.")
-            record.status = JobStatus.FAILED.value
+            record.status = JobStatus.QUEUED.value if next_attempt_at is not None else JobStatus.FAILED.value
             record.updated_at = failed_at
             record.finished_at = failed_at
             record.last_error = error
+            record.last_error_kind = error_kind
+            record.next_attempt_at = next_attempt_at
             session.flush()
             session.refresh(record)
             return self._to_task(record)
@@ -172,12 +195,38 @@ class SqlAlchemyMediaTaskStore:
             existing_columns = {column["name"] for column in schema.get_columns("media_tasks")}
             if "pet_name" not in existing_columns:
                 connection.execute(text("ALTER TABLE media_tasks ADD COLUMN pet_name VARCHAR(255)"))
+            if "last_error_kind" not in existing_columns:
+                connection.execute(
+                    text("ALTER TABLE media_tasks ADD COLUMN last_error_kind VARCHAR(64)"),
+                )
+            if "next_attempt_at" not in existing_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE media_tasks ADD COLUMN next_attempt_at "
+                        f"{self._datetime_column_type(connection.engine.dialect.name)}"
+                    ),
+                )
+            if "last_attempt_started_at" not in existing_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE media_tasks ADD COLUMN last_attempt_started_at "
+                        f"{self._datetime_column_type(connection.engine.dialect.name)}"
+                    ),
+                )
+            existing_indexes = {index["name"] for index in schema.get_indexes("media_tasks")}
+            if "ix_media_tasks_next_attempt_at" not in existing_indexes:
+                connection.execute(
+                    text("CREATE INDEX ix_media_tasks_next_attempt_at ON media_tasks (next_attempt_at)"),
+                )
 
     def _mark_running(self, record: MediaTaskRecord, started_at: datetime) -> MediaTask:
         record.status = JobStatus.RUNNING.value
         record.updated_at = started_at
         record.last_error = None
+        record.last_error_kind = None
         record.finished_at = None
+        record.next_attempt_at = None
+        record.last_attempt_started_at = started_at
         record.attempts += 1
         return self._to_task(record)
 
@@ -215,6 +264,8 @@ class SqlAlchemyMediaTaskStore:
             updated_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.updated_at),
             attempts=record.attempts,
             last_error=record.last_error,
+            last_error_kind=record.last_error_kind,
+            next_attempt_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.next_attempt_at),
             finished_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.finished_at),
             feishu_record_id=record.feishu_record_id,
             event_time=SqlAlchemyMediaTaskStore._coerce_datetime(record.event_time),
@@ -232,3 +283,9 @@ class SqlAlchemyMediaTaskStore:
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value
+
+    @staticmethod
+    def _datetime_column_type(dialect_name: str) -> str:
+        if dialect_name == "postgresql":
+            return "TIMESTAMP WITH TIME ZONE"
+        return "DATETIME"

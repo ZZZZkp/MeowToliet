@@ -169,3 +169,52 @@ def test_sql_task_store_allows_retrying_failed_task(tmp_path: Path) -> None:
         asyncio.run(run_test())
     finally:
         store.dispose()
+
+
+def test_sql_task_store_keeps_retryable_failure_queued_until_backoff_expires(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'tasks-backoff.db'}"
+    store = SqlAlchemyMediaTaskStore(database_url)
+    media = PetKitMedia(
+        id="media-4",
+        device_id="device-4",
+        started_at=datetime(2026, 4, 9, 12, 0, tzinfo=UTC),
+        cover_url=None,
+        encrypted_download_url="https://example.com/video-4.mp4",
+        source_day="2026-04-09",
+    )
+
+    async def run_test() -> None:
+        task, _created = await store.enqueue_media(
+            media,
+            discovered_at=datetime(2026, 4, 9, 12, 1, tzinfo=UTC),
+        )
+        await store.start_task(
+            task.id,
+            started_at=datetime(2026, 4, 9, 12, 2, tzinfo=UTC),
+        )
+        retry_task = await store.mark_failed(
+            task.id,
+            failed_at=datetime(2026, 4, 9, 12, 3, tzinfo=UTC),
+            error="temporary timeout",
+            error_kind="timeout",
+            next_attempt_at=datetime(2026, 4, 9, 12, 8, tzinfo=UTC),
+        )
+        not_ready = await store.start_next_task(
+            started_at=datetime(2026, 4, 9, 12, 7, tzinfo=UTC),
+        )
+        ready = await store.start_next_task(
+            started_at=datetime(2026, 4, 9, 12, 8, tzinfo=UTC),
+        )
+
+        assert retry_task.status == JobStatus.QUEUED
+        assert retry_task.last_error_kind == "timeout"
+        assert retry_task.next_attempt_at == datetime(2026, 4, 9, 12, 8, tzinfo=UTC)
+        assert not_ready is None
+        assert ready is not None
+        assert ready.status == JobStatus.RUNNING
+        assert ready.attempts == 2
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        store.dispose()

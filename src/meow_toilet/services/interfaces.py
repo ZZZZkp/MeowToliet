@@ -70,7 +70,15 @@ class MediaTaskStore(Protocol):
         outcome: PipelineOutcome,
     ) -> MediaTask: ...
 
-    async def mark_failed(self, task_id: str, failed_at: datetime, error: str) -> MediaTask: ...
+    async def mark_failed(
+        self,
+        task_id: str,
+        failed_at: datetime,
+        error: str,
+        *,
+        error_kind: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> MediaTask: ...
 
     async def get_task(self, task_id: str) -> MediaTask | None: ...
 

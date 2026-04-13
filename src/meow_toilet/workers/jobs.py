@@ -14,10 +14,13 @@ from meow_toilet.adapters.petkit import PetKitApiAdapter
 from meow_toilet.adapters.video import FfmpegVideoProcessor
 from meow_toilet.config import get_settings
 from meow_toilet.domain.entities import MediaTask, PipelineRequest
-from meow_toilet.runtime import create_task_store
+from meow_toilet.observability import configure_logging
 from meow_toilet.services.interfaces import MediaTaskStore
 from meow_toilet.services.pipeline import LitterEventPipeline
+from meow_toilet.services.retries import RetryPolicy, classify_failure
+from meow_toilet.services.sql_task_store import SqlAlchemyMediaTaskStore
 from meow_toilet.services.temp_files import TemporaryMediaStore
+import structlog
 
 
 def _utc_now() -> datetime:
@@ -30,11 +33,14 @@ class MediaJobWorker:
         *,
         task_store: MediaTaskStore,
         pipeline: LitterEventPipeline,
+        retry_policy: RetryPolicy,
         now_provider: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._task_store = task_store
         self._pipeline = pipeline
+        self._retry_policy = retry_policy
         self._now_provider = now_provider
+        self._logger = structlog.get_logger(__name__)
 
     async def process_task(self, task_id: str) -> MediaTask | None:
         task = await self._task_store.start_task(task_id, started_at=self._now_provider())
@@ -52,12 +58,46 @@ class MediaJobWorker:
         try:
             outcome = await self._pipeline.run(PipelineRequest(media=task.media))
         except Exception as exc:
+            failed_at = self._now_provider()
+            failure = classify_failure(exc)
+            should_retry = self._retry_policy.should_retry(
+                attempts=task.attempts,
+                classification=failure,
+            )
+            next_attempt_at = (
+                self._retry_policy.next_attempt_at(
+                    attempts=task.attempts,
+                    failed_at=failed_at,
+                )
+                if should_retry
+                else None
+            )
+            self._logger.warning(
+                "media_task_failed",
+                task_id=task.id,
+                media_id=task.media.id,
+                attempt=task.attempts,
+                error_kind=failure.kind,
+                retryable=failure.retryable,
+                retry_scheduled=should_retry,
+                next_attempt_at=next_attempt_at.isoformat() if next_attempt_at else None,
+                error=failure.message,
+            )
             return await self._task_store.mark_failed(
                 task.id,
-                failed_at=self._now_provider(),
-                error=str(exc),
+                failed_at=failed_at,
+                error=failure.message,
+                error_kind=failure.kind,
+                next_attempt_at=next_attempt_at,
             )
 
+        self._logger.info(
+            "media_task_succeeded",
+            task_id=task.id,
+            media_id=task.media.id,
+            attempt=task.attempts,
+            feishu_record_id=outcome.feishu_record_id,
+        )
         return await self._task_store.mark_succeeded(
             task.id,
             completed_at=self._now_provider(),
@@ -66,8 +106,9 @@ class MediaJobWorker:
 
 
 async def process_media_job(media_key: str) -> dict[str, str | int | None]:
+    configure_logging()
     settings = get_settings()
-    task_store = create_task_store(settings)
+    task_store = SqlAlchemyMediaTaskStore(settings.database_url)
     petkit = PetKitApiAdapter.from_settings(settings)
     analyzer = GeminiAnalyzer.from_settings(settings)
     feishu = FeishuBitableSink.from_settings(settings)
@@ -78,7 +119,12 @@ async def process_media_job(media_key: str) -> dict[str, str | int | None]:
         feishu=feishu,
         temp_store=TemporaryMediaStore(settings.temp_media_root),
     )
-    worker = MediaJobWorker(task_store=task_store, pipeline=pipeline)
+    retry_policy = RetryPolicy(
+        max_attempts=settings.worker_retry_max_attempts,
+        backoff_seconds=settings.worker_retry_backoff_seconds,
+        max_backoff_seconds=settings.worker_retry_max_backoff_seconds,
+    )
+    worker = MediaJobWorker(task_store=task_store, pipeline=pipeline, retry_policy=retry_policy)
     try:
         task = await worker.process_task(media_key)
     finally:
@@ -105,8 +151,9 @@ async def process_media_job(media_key: str) -> dict[str, str | int | None]:
 
 
 async def _run_cli(args: argparse.Namespace) -> int:
+    configure_logging()
     settings = get_settings()
-    task_store = create_task_store(settings)
+    task_store = SqlAlchemyMediaTaskStore(settings.database_url)
     petkit = PetKitApiAdapter.from_settings(settings)
     analyzer = GeminiAnalyzer.from_settings(settings)
     feishu = FeishuBitableSink.from_settings(settings)
@@ -117,18 +164,28 @@ async def _run_cli(args: argparse.Namespace) -> int:
         feishu=feishu,
         temp_store=TemporaryMediaStore(settings.temp_media_root),
     )
-    worker = MediaJobWorker(task_store=task_store, pipeline=pipeline)
+    retry_policy = RetryPolicy(
+        max_attempts=settings.worker_retry_max_attempts,
+        backoff_seconds=settings.worker_retry_backoff_seconds,
+        max_backoff_seconds=settings.worker_retry_max_backoff_seconds,
+    )
+    worker = MediaJobWorker(task_store=task_store, pipeline=pipeline, retry_policy=retry_policy)
+    logger = structlog.get_logger(__name__)
 
     try:
         if args.loop:
             while True:
-                task = (
-                    await worker.process_task(args.task_id)
-                    if args.task_id
-                    else await worker.process_next_job()
-                )
-                _print_task_payload(task, args.task_id)
+                try:
+                    task = (
+                        await worker.process_task(args.task_id)
+                        if args.task_id
+                        else await worker.process_next_job()
+                    )
+                    _print_task_payload(task, args.task_id)
+                except Exception:
+                    logger.exception("worker_loop_iteration_failed")
                 await asyncio.sleep(args.idle_sleep_seconds)
+            raise AssertionError("Unreachable worker loop exit.")
         task = (
             await worker.process_task(args.task_id)
             if args.task_id
@@ -177,7 +234,7 @@ def main() -> int:
     parser.add_argument(
         "--idle-sleep-seconds",
         type=float,
-        default=5.0,
+        default=float(get_settings().worker_idle_sleep_seconds),
         help="Sleep duration between loop iterations when --loop is enabled.",
     )
     return asyncio.run(_run_cli(parser.parse_args()))

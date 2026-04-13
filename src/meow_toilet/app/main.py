@@ -17,8 +17,11 @@ from meow_toilet.app.dependencies import (
 )
 from meow_toilet.config import get_settings
 from meow_toilet.domain.entities import MediaTask
+from meow_toilet.observability import configure_logging
 from meow_toilet.services.dashboard import DashboardMediaService, DashboardSnapshotService
 from meow_toilet.services.operations import ManualOperationsService
+
+configure_logging()
 
 app = FastAPI(title="MeowToliet 猫砂盆看板", version="0.1.0")
 templates = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))

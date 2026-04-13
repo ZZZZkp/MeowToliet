@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
+import time
 from typing import Any
 
 import httpx
+import structlog
 
 from meow_toilet.config import Settings
 from meow_toilet.domain.entities import AnalysisResult, PetKitMedia, ScreenshotArtifact
+from meow_toilet.errors import ExternalServiceError
 
 FIELD_NAME_ALIASES: dict[str, tuple[str, ...]] = {
     "media_id": ("eventId", "Media ID", "媒体ID", "事件ID"),
@@ -74,6 +78,7 @@ class FeishuBitableSink:
         self._client = client or httpx.AsyncClient(timeout=120.0)
         self._owns_client = client is None
         self._resolved_field_mapping: dict[str, FeishuField | None] | None = None
+        self._logger = structlog.get_logger(__name__).bind(service="feishu", table_id=table_id)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> FeishuBitableSink:
@@ -111,17 +116,22 @@ class FeishuBitableSink:
         return await self._create_record(fields=fields, tenant_access_token=tenant_token)
 
     async def _get_tenant_access_token(self) -> str:
-        response = await self._client.post(
-            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        response = await self._request(
+            operation="tenant_access_token",
+            method="POST",
+            url="https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
             json={
                 "app_id": self._app_id,
                 "app_secret": self._app_secret,
             },
         )
-        response.raise_for_status()
-        payload = response.json()
+        payload = self._parse_json_response(response, operation="tenant_access_token")
         if payload.get("code") != 0:
-            raise RuntimeError(f"Feishu tenant access token request failed: {payload}")
+            raise self._business_error(
+                operation="tenant_access_token",
+                payload=payload,
+                response=response,
+            )
         return str(payload["tenant_access_token"])
 
     async def list_fields(self) -> list[FeishuField]:
@@ -129,16 +139,24 @@ class FeishuBitableSink:
         return await self._list_fields_with_token(tenant_access_token=tenant_token)
 
     async def _list_fields_with_token(self, *, tenant_access_token: str) -> list[FeishuField]:
-        response = await self._client.get(
-            f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self._app_token}/tables/{self._table_id}/fields",
+        response = await self._request(
+            operation="list_fields",
+            method="GET",
+            url=(
+                f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
+                f"{self._app_token}/tables/{self._table_id}/fields"
+            ),
             headers={
                 "Authorization": f"Bearer {tenant_access_token}",
             },
         )
-        response.raise_for_status()
-        payload = response.json()
+        payload = self._parse_json_response(response, operation="list_fields")
         if payload.get("code") != 0:
-            raise RuntimeError(f"Feishu field listing failed: {payload}")
+            raise self._business_error(
+                operation="list_fields",
+                payload=payload,
+                response=response,
+            )
         items = payload.get("data", {}).get("items", [])
         return [
             FeishuField(
@@ -188,8 +206,10 @@ class FeishuBitableSink:
         parent_type: str,
     ) -> FeishuUploadResult:
         with file_path.open("rb") as file_handle:
-            response = await self._client.post(
-                "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all",
+            response = await self._request(
+                operation="upload_media",
+                method="POST",
+                url="https://open.feishu.cn/open-apis/drive/v1/medias/upload_all",
                 headers={
                     "Authorization": f"Bearer {tenant_access_token}",
                 },
@@ -203,10 +223,13 @@ class FeishuBitableSink:
                     "file": (file_path.name, file_handle, "image/jpeg"),
                 },
             )
-        response.raise_for_status()
-        payload = response.json()
+        payload = self._parse_json_response(response, operation="upload_media")
         if payload.get("code") != 0:
-            raise RuntimeError(f"Feishu media upload failed: {payload}")
+            raise self._business_error(
+                operation="upload_media",
+                payload=payload,
+                response=response,
+            )
         return FeishuUploadResult(file_token=str(payload["data"]["file_token"]))
 
     async def _create_record(
@@ -215,19 +238,218 @@ class FeishuBitableSink:
         fields: dict[str, Any],
         tenant_access_token: str,
     ) -> str:
-        response = await self._client.post(
-            f"https://open.feishu.cn/open-apis/bitable/v1/apps/{self._app_token}/tables/{self._table_id}/records",
+        response = await self._request(
+            operation="create_record",
+            method="POST",
+            url=(
+                f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
+                f"{self._app_token}/tables/{self._table_id}/records"
+            ),
             headers={
                 "Authorization": f"Bearer {tenant_access_token}",
                 "Content-Type": "application/json; charset=utf-8",
             },
             json={"fields": fields},
         )
-        response.raise_for_status()
-        payload = response.json()
+        payload = self._parse_json_response(response, operation="create_record")
         if payload.get("code") != 0:
-            raise RuntimeError(f"Feishu record creation failed: {payload}")
+            raise self._business_error(
+                operation="create_record",
+                payload=payload,
+                response=response,
+            )
         return str(payload["data"]["record"]["record_id"])
+
+    async def _request(
+        self,
+        *,
+        operation: str,
+        method: str,
+        url: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        started = time.perf_counter()
+        try:
+            response = await self._client.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response
+        except httpx.TimeoutException as exc:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            self._logger.warning(
+                "external_request_timeout",
+                operation=operation,
+                elapsed_ms=elapsed_ms,
+                url=url,
+                error=str(exc),
+            )
+            raise ExternalServiceError(
+                service="feishu",
+                operation=operation,
+                kind="timeout",
+                retryable=True,
+                message="Feishu request timed out.",
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
+            status_code = response.status_code
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            request_id = self._extract_request_id(response)
+            response_excerpt = self._response_excerpt(response)
+            retryable = status_code == 429 or status_code >= 500
+            kind = "rate_limit" if status_code == 429 else "http_status"
+            self._logger.warning(
+                "external_request_failed",
+                operation=operation,
+                elapsed_ms=elapsed_ms,
+                url=str(response.request.url),
+                status_code=status_code,
+                request_id=request_id,
+                retry_after=response.headers.get("Retry-After"),
+                response_excerpt=response_excerpt,
+            )
+            raise ExternalServiceError(
+                service="feishu",
+                operation=operation,
+                kind=kind,
+                retryable=retryable,
+                message="Feishu request failed.",
+                status_code=status_code,
+                request_id=request_id,
+            ) from exc
+        except httpx.RequestError as exc:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            self._logger.warning(
+                "external_request_error",
+                operation=operation,
+                elapsed_ms=elapsed_ms,
+                url=url,
+                error=str(exc),
+            )
+            raise ExternalServiceError(
+                service="feishu",
+                operation=operation,
+                kind="network",
+                retryable=True,
+                message="Feishu request failed before receiving a response.",
+            ) from exc
+
+    def _parse_json_response(
+        self,
+        response: httpx.Response,
+        *,
+        operation: str,
+    ) -> dict[str, Any]:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise self._format_error(
+                operation=operation,
+                message="Feishu returned invalid JSON.",
+                response=response,
+            ) from exc
+        if not isinstance(payload, dict):
+            raise self._format_error(
+                operation=operation,
+                message="Feishu returned a non-object JSON payload.",
+                response=response,
+            )
+        return payload
+
+    def _format_error(
+        self,
+        *,
+        operation: str,
+        message: str,
+        response: httpx.Response,
+    ) -> ExternalServiceError:
+        request_id = self._extract_request_id(response)
+        self._logger.warning(
+            "external_response_format_error",
+            operation=operation,
+            status_code=response.status_code,
+            request_id=request_id,
+            response_excerpt=self._response_excerpt(response),
+            error=message,
+        )
+        return ExternalServiceError(
+            service="feishu",
+            operation=operation,
+            kind="response_format",
+            retryable=True,
+            message=message,
+            status_code=response.status_code,
+            request_id=request_id,
+        )
+
+    def _business_error(
+        self,
+        *,
+        operation: str,
+        payload: dict[str, Any],
+        response: httpx.Response,
+    ) -> ExternalServiceError:
+        code = payload.get("code")
+        msg = str(payload.get("msg") or payload.get("message") or "Feishu business request failed.")
+        request_id = self._extract_request_id(response)
+        retryable = self._is_retryable_business_error(code=code, message=msg)
+        kind = (
+            "rate_limit"
+            if retryable and self._looks_like_rate_limit(code=code, message=msg)
+            else "business_error"
+        )
+        self._logger.warning(
+            "external_business_error",
+            operation=operation,
+            status_code=response.status_code,
+            request_id=request_id,
+            business_code=code,
+            retryable=retryable,
+            message=msg,
+            response_excerpt=self._response_excerpt(response),
+        )
+        return ExternalServiceError(
+            service="feishu",
+            operation=operation,
+            kind=kind,
+            retryable=retryable,
+            message=msg,
+            status_code=response.status_code,
+            request_id=request_id,
+        )
+
+    @staticmethod
+    def _looks_like_rate_limit(*, code: Any, message: str) -> bool:
+        normalized_message = message.lower()
+        return (
+            str(code) in {"429", "1254290", "99991400", "99991663"}
+            or "rate" in normalized_message
+            or "too many" in normalized_message
+            or "频率" in message
+            or "限流" in message
+        )
+
+    @classmethod
+    def _is_retryable_business_error(cls, *, code: Any, message: str) -> bool:
+        return cls._looks_like_rate_limit(code=code, message=message) or bool(
+            re.search(r"(timeout|temporar|try again|繁忙|超时)", message, flags=re.IGNORECASE),
+        )
+
+    @staticmethod
+    def _extract_request_id(response: httpx.Response) -> str | None:
+        for header_name in ("x-request-id", "x-tt-logid"):
+            if response.headers.get(header_name):
+                return response.headers[header_name]
+        return None
+
+    @staticmethod
+    def _response_excerpt(response: httpx.Response, limit: int = 400) -> str | None:
+        try:
+            text = response.text.strip()
+        except Exception:
+            return None
+        if not text:
+            return None
+        return text[:limit]
 
     def _build_fields(
         self,
@@ -277,7 +499,12 @@ class FeishuBitableSink:
             analysis.raw_summary,
             logical_name="raw_summary",
         )
-        self._set_field(fields, mapping.get("source_day"), media.source_day, logical_name="source_day")
+        self._set_field(
+            fields,
+            mapping.get("source_day"),
+            media.source_day,
+            logical_name="source_day",
+        )
         self._set_field(
             fields,
             mapping.get("screenshot"),
@@ -352,7 +579,8 @@ class FeishuBitableSink:
             return None
 
         option_by_normalized_name = {
-            FeishuBitableSink._normalize_option_name(option.name): option.name for option in field.options
+            FeishuBitableSink._normalize_option_name(option.name): option.name
+            for option in field.options
         }
         candidates = [raw_value]
         alias_candidates = SINGLE_SELECT_VALUE_ALIASES.get(logical_name, {}).get(

@@ -12,8 +12,9 @@ Dockerized dashboard:
 - `ffmpeg` normalization, duration probing, and screenshot extraction are working.
 - Gemini video analysis with Chinese structured JSON output and fallback parsing is working.
 - Feishu Bitable record creation with screenshot attachment and single-select field mapping is working.
-- Scheduler media discovery can enqueue deduplicated tasks.
-- Worker execution can advance task state through queued, running, succeeded, and failed.
+- Scheduler and worker can now run as long-lived Docker services.
+- Worker failures can now auto-retry with exponential backoff before becoming terminal failures.
+- Gemini and Feishu request failures now emit more detailed structured logs for timeout, rate limit, and response-format issues.
 - Dashboard and `/api/dashboard` now read from a shared task snapshot flow.
 - Manual poll, process-next, and per-task retry actions are wired through the dashboard.
 - PetKit preview images are handled as encrypted assets and decrypted server-side before being served.
@@ -66,6 +67,13 @@ docker compose up --build -d
 open http://127.0.0.1:8000/
 ```
 
+This now starts `web`, `scheduler`, and `worker` alongside PostgreSQL and Redis. To inspect the
+background services:
+
+```bash
+docker compose logs -f scheduler worker
+```
+
 ### Docker test mode
 
 ```bash
@@ -85,7 +93,7 @@ picked up immediately without rebuilding the runtime `web` container.
 The current dashboard is intentionally optimized for a low-frequency home setup:
 
 - PostgreSQL and Redis are kept for persistent state and dispatch compatibility.
-- The UI still supports lightweight manual operation instead of requiring long-running automation first.
+- The UI still supports lightweight manual operation even though scheduler and worker now run in the background.
 - Cover images are served on demand and videos are still temporary processing artifacts.
 
 ## Verified probe commands
@@ -151,6 +159,6 @@ Ambiguous Gemini results now map directly to the `看不清` single-select optio
 
 ## Next priorities
 
-- Replace single-shot scheduler and worker commands with long-running loops plus Redis-backed dispatch.
-- Expand the dashboard beyond queue snapshots into richer cover browsing, replay tools, and failure recovery actions.
+- Expand the dashboard with retry timing, richer failure inspection, and replay tools.
+- Tighten multi-worker claiming semantics further if we decide to scale beyond a single worker container.
 - Evolve the Feishu table schema so more structured fields can be written directly.

@@ -83,6 +83,8 @@ class MediaTask:
     updated_at: datetime
     attempts: int = 0
     last_error: str | None = None
+    last_error_kind: str | None = None
+    next_attempt_at: datetime | None = None
     finished_at: datetime | None = None
     feishu_record_id: str | None = None
     event_time: datetime | None = None

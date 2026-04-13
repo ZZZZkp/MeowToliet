@@ -29,6 +29,7 @@ services:
     build:
       context: .
       target: runtime
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,8 +69,122 @@ services:
       FEISHU_FIELD_RAW_SUMMARY: ${FEISHU_FIELD_RAW_SUMMARY:-Raw Summary}
       FEISHU_FIELD_SCREENSHOT: ${FEISHU_FIELD_SCREENSHOT:-大便照片}
       FEISHU_FIELD_SOURCE_DAY: ${FEISHU_FIELD_SOURCE_DAY:-Source Day}
+      WORKER_RETRY_MAX_ATTEMPTS: ${WORKER_RETRY_MAX_ATTEMPTS:-5}
+      WORKER_RETRY_BACKOFF_SECONDS: ${WORKER_RETRY_BACKOFF_SECONDS:-30}
+      WORKER_RETRY_MAX_BACKOFF_SECONDS: ${WORKER_RETRY_MAX_BACKOFF_SECONDS:-900}
+      WORKER_IDLE_SLEEP_SECONDS: ${WORKER_IDLE_SLEEP_SECONDS:-5}
     ports:
       - "8000:8000"
+    volumes:
+      - ./tmp:/app/tmp
+
+  scheduler:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      APP_TIMEZONE: Asia/Shanghai
+      DATABASE_URL: postgresql+psycopg://meow:meow@postgres:5432/meow_toilet
+      DATABASE_FALLBACK_URL: sqlite:///./tmp/meow_toilet.db
+      REDIS_URL: redis://redis:6379/0
+      ARQ_QUEUE_NAME: meow_toilet:media
+      TEMP_MEDIA_ROOT: ./tmp/media
+      PETKIT_EMAIL: ${PETKIT_EMAIL:-}
+      PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
+      PETKIT_REGION: ${PETKIT_REGION:-cn}
+      PETKIT_DEVICE_IDS: ${PETKIT_DEVICE_IDS:-}
+      PETKIT_POLL_INTERVAL_SECONDS: ${PETKIT_POLL_INTERVAL_SECONDS:-300}
+      PETKIT_SESSION_REFRESH_SECONDS: ${PETKIT_SESSION_REFRESH_SECONDS:-1800}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_BITABLE_APP_TOKEN: ${FEISHU_BITABLE_APP_TOKEN:-}
+      FEISHU_BITABLE_TABLE_ID: ${FEISHU_BITABLE_TABLE_ID:-}
+      FEISHU_FIELD_MEDIA_ID: ${FEISHU_FIELD_MEDIA_ID:-eventId}
+      FEISHU_FIELD_DEVICE_ID: ${FEISHU_FIELD_DEVICE_ID:-Device ID}
+      FEISHU_FIELD_EVENT_TIME: ${FEISHU_FIELD_EVENT_TIME:-时间}
+      FEISHU_FIELD_PET_NAME: ${FEISHU_FIELD_PET_NAME:-猫}
+      FEISHU_FIELD_ELIMINATION_TYPE: ${FEISHU_FIELD_ELIMINATION_TYPE:-排泄类型}
+      FEISHU_FIELD_STOOL_SCORE: ${FEISHU_FIELD_STOOL_SCORE:-Stool Score}
+      FEISHU_FIELD_STOOL_SHAPE_NOTE: ${FEISHU_FIELD_STOOL_SHAPE_NOTE:-大便描述}
+      FEISHU_FIELD_CONFIDENCE: ${FEISHU_FIELD_CONFIDENCE:-Confidence}
+      FEISHU_FIELD_RAW_SUMMARY: ${FEISHU_FIELD_RAW_SUMMARY:-Raw Summary}
+      FEISHU_FIELD_SCREENSHOT: ${FEISHU_FIELD_SCREENSHOT:-大便照片}
+      FEISHU_FIELD_SOURCE_DAY: ${FEISHU_FIELD_SOURCE_DAY:-Source Day}
+      WORKER_RETRY_MAX_ATTEMPTS: ${WORKER_RETRY_MAX_ATTEMPTS:-5}
+      WORKER_RETRY_BACKOFF_SECONDS: ${WORKER_RETRY_BACKOFF_SECONDS:-30}
+      WORKER_RETRY_MAX_BACKOFF_SECONDS: ${WORKER_RETRY_MAX_BACKOFF_SECONDS:-900}
+      WORKER_IDLE_SLEEP_SECONDS: ${WORKER_IDLE_SLEEP_SECONDS:-5}
+    command:
+      - sh
+      - -lc
+      - PYTHONPATH=src python -m alembic upgrade head && PYTHONPATH=src python -m meow_toilet.scheduler.service --loop
+    volumes:
+      - ./tmp:/app/tmp
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      APP_TIMEZONE: Asia/Shanghai
+      DATABASE_URL: postgresql+psycopg://meow:meow@postgres:5432/meow_toilet
+      DATABASE_FALLBACK_URL: sqlite:///./tmp/meow_toilet.db
+      REDIS_URL: redis://redis:6379/0
+      ARQ_QUEUE_NAME: meow_toilet:media
+      TEMP_MEDIA_ROOT: ./tmp/media
+      PETKIT_EMAIL: ${PETKIT_EMAIL:-}
+      PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
+      PETKIT_REGION: ${PETKIT_REGION:-cn}
+      PETKIT_DEVICE_IDS: ${PETKIT_DEVICE_IDS:-}
+      PETKIT_POLL_INTERVAL_SECONDS: ${PETKIT_POLL_INTERVAL_SECONDS:-300}
+      PETKIT_SESSION_REFRESH_SECONDS: ${PETKIT_SESSION_REFRESH_SECONDS:-1800}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_BITABLE_APP_TOKEN: ${FEISHU_BITABLE_APP_TOKEN:-}
+      FEISHU_BITABLE_TABLE_ID: ${FEISHU_BITABLE_TABLE_ID:-}
+      FEISHU_FIELD_MEDIA_ID: ${FEISHU_FIELD_MEDIA_ID:-eventId}
+      FEISHU_FIELD_DEVICE_ID: ${FEISHU_FIELD_DEVICE_ID:-Device ID}
+      FEISHU_FIELD_EVENT_TIME: ${FEISHU_FIELD_EVENT_TIME:-时间}
+      FEISHU_FIELD_PET_NAME: ${FEISHU_FIELD_PET_NAME:-猫}
+      FEISHU_FIELD_ELIMINATION_TYPE: ${FEISHU_FIELD_ELIMINATION_TYPE:-排泄类型}
+      FEISHU_FIELD_STOOL_SCORE: ${FEISHU_FIELD_STOOL_SCORE:-Stool Score}
+      FEISHU_FIELD_STOOL_SHAPE_NOTE: ${FEISHU_FIELD_STOOL_SHAPE_NOTE:-大便描述}
+      FEISHU_FIELD_CONFIDENCE: ${FEISHU_FIELD_CONFIDENCE:-Confidence}
+      FEISHU_FIELD_RAW_SUMMARY: ${FEISHU_FIELD_RAW_SUMMARY:-Raw Summary}
+      FEISHU_FIELD_SCREENSHOT: ${FEISHU_FIELD_SCREENSHOT:-大便照片}
+      FEISHU_FIELD_SOURCE_DAY: ${FEISHU_FIELD_SOURCE_DAY:-Source Day}
+      WORKER_RETRY_MAX_ATTEMPTS: ${WORKER_RETRY_MAX_ATTEMPTS:-5}
+      WORKER_RETRY_BACKOFF_SECONDS: ${WORKER_RETRY_BACKOFF_SECONDS:-30}
+      WORKER_RETRY_MAX_BACKOFF_SECONDS: ${WORKER_RETRY_MAX_BACKOFF_SECONDS:-900}
+      WORKER_IDLE_SLEEP_SECONDS: ${WORKER_IDLE_SLEEP_SECONDS:-5}
+    command:
+      - sh
+      - -lc
+      - PYTHONPATH=src python -m alembic upgrade head && PYTHONPATH=src python -m meow_toilet.workers.jobs --loop
     volumes:
       - ./tmp:/app/tmp
 
