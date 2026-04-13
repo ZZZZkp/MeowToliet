@@ -84,6 +84,7 @@ class ManualOperationsService:
             pipeline=pipeline,
             feishu_sync_service=feishu_sync_service,
             retry_policy=retry_policy,
+            stale_task_timeout_seconds=settings.worker_stale_task_timeout_seconds,
         ), (
             petkit,
             analyzer,

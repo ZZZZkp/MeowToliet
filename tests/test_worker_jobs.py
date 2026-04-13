@@ -90,6 +90,8 @@ def test_worker_marks_task_succeeded_after_pipeline_run() -> None:
             datetime(2026, 4, 9, 10, 2, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 10, 3, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 10, 4, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 10, 5, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 10, 6, tzinfo=timezone.utc),
         ],
     )
     worker = MediaJobWorker(
@@ -97,6 +99,7 @@ def test_worker_marks_task_succeeded_after_pipeline_run() -> None:
         pipeline=SuccessfulPipeline(),
         feishu_sync_service=SuccessfulFeishuSyncService(),
         retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+        stale_task_timeout_seconds=1800,
         now_provider=lambda: next(clock),
     )
 
@@ -133,6 +136,7 @@ def test_worker_marks_task_failed_when_pipeline_raises() -> None:
         [
             datetime(2026, 4, 9, 11, 0, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 11, 1, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 11, 2, tzinfo=timezone.utc),
         ],
     )
     worker = MediaJobWorker(
@@ -140,6 +144,7 @@ def test_worker_marks_task_failed_when_pipeline_raises() -> None:
         pipeline=FailingPipeline(),
         feishu_sync_service=SuccessfulFeishuSyncService(),
         retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+        stale_task_timeout_seconds=1800,
         now_provider=lambda: next(clock),
     )
 
@@ -169,6 +174,7 @@ def test_worker_schedules_retry_with_backoff_for_retryable_failures() -> None:
         [
             datetime(2026, 4, 9, 12, 0, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 12, 1, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 12, 1, 30, tzinfo=timezone.utc),
         ],
     )
     worker = MediaJobWorker(
@@ -176,6 +182,7 @@ def test_worker_schedules_retry_with_backoff_for_retryable_failures() -> None:
         pipeline=RetryableFailingPipeline(),
         feishu_sync_service=SuccessfulFeishuSyncService(),
         retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+        stale_task_timeout_seconds=1800,
         now_provider=lambda: next(clock),
     )
 
@@ -188,7 +195,7 @@ def test_worker_schedules_retry_with_backoff_for_retryable_failures() -> None:
         assert task.attempts == 1
         assert task.last_error_kind == "timeout"
         assert task.last_error is not None
-        assert task.next_attempt_at == datetime(2026, 4, 9, 12, 1, 30, tzinfo=timezone.utc)
+        assert task.next_attempt_at == datetime(2026, 4, 9, 12, 2, 0, tzinfo=timezone.utc)
 
     asyncio.run(run_test())
 
@@ -210,6 +217,8 @@ def test_worker_retries_feishu_sync_after_analysis_succeeds() -> None:
             datetime(2026, 4, 9, 13, 2, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 13, 3, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 13, 4, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 13, 4, 30, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 13, 5, 0, tzinfo=timezone.utc),
         ],
     )
     worker = MediaJobWorker(
@@ -217,6 +226,7 @@ def test_worker_retries_feishu_sync_after_analysis_succeeds() -> None:
         pipeline=SuccessfulPipeline(),
         feishu_sync_service=RetryableFailingFeishuSyncService(),
         retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+        stale_task_timeout_seconds=1800,
         now_provider=lambda: next(clock),
     )
 
@@ -240,9 +250,126 @@ def test_worker_retries_feishu_sync_after_analysis_succeeds() -> None:
             4,
             9,
             13,
-            4,
+            5,
             30,
             tzinfo=timezone.utc,
         )
+
+    asyncio.run(run_test())
+
+
+def test_worker_recovers_stale_running_analysis_task() -> None:
+    media = PetKitMedia(
+        id="media-stale-analysis",
+        device_id="device-stale-analysis",
+        started_at=datetime(2026, 4, 9, 14, 0, tzinfo=timezone.utc),
+        cover_url=None,
+        encrypted_download_url="https://example.com/video-stale-analysis.mp4",
+        source_day="2026-04-09",
+    )
+    task_store = InMemoryMediaTaskStore()
+    clock = iter(
+        [
+            datetime(2026, 4, 9, 15, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 15, 0, 1, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 15, 0, 2, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 15, 0, 3, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 15, 0, 4, tzinfo=timezone.utc),
+        ],
+    )
+    worker = MediaJobWorker(
+        task_store=task_store,
+        pipeline=SuccessfulPipeline(),
+        feishu_sync_service=SuccessfulFeishuSyncService(),
+        retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+        stale_task_timeout_seconds=1800,
+        now_provider=lambda: next(clock),
+    )
+
+    async def run_test() -> None:
+        task, _ = await task_store.enqueue_media(
+            media,
+            discovered_at=datetime(2026, 4, 9, 14, 0, tzinfo=timezone.utc),
+        )
+        await task_store.start_task(
+            task.id,
+            started_at=datetime(2026, 4, 9, 14, 0, 1, tzinfo=timezone.utc),
+        )
+        processed = await worker.process_next_job()
+
+        assert processed is not None
+        assert processed.status == JobStatus.SUCCEEDED
+        assert processed.attempts == 2
+
+    asyncio.run(run_test())
+
+
+def test_worker_recovers_stale_running_feishu_sync() -> None:
+    media = PetKitMedia(
+        id="media-stale-feishu",
+        device_id="device-stale-feishu",
+        started_at=datetime(2026, 4, 9, 16, 0, tzinfo=timezone.utc),
+        cover_url=None,
+        encrypted_download_url="https://example.com/video-stale-feishu.mp4",
+        source_day="2026-04-09",
+    )
+    task_store = InMemoryMediaTaskStore()
+    clock = iter(
+        [
+            datetime(2026, 4, 9, 17, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 17, 0, 1, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 17, 0, 2, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 17, 0, 3, tzinfo=timezone.utc),
+        ],
+    )
+    worker = MediaJobWorker(
+        task_store=task_store,
+        pipeline=SuccessfulPipeline(),
+        feishu_sync_service=SuccessfulFeishuSyncService(),
+        retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+        stale_task_timeout_seconds=1800,
+        now_provider=lambda: next(clock),
+    )
+
+    async def run_test() -> None:
+        task, _ = await task_store.enqueue_media(
+            media,
+            discovered_at=datetime(2026, 4, 9, 16, 0, tzinfo=timezone.utc),
+        )
+        await task_store.start_task(
+            task.id,
+            started_at=datetime(2026, 4, 9, 16, 0, 1, tzinfo=timezone.utc),
+        )
+        await task_store.mark_succeeded(
+            task.id,
+            completed_at=datetime(2026, 4, 9, 16, 0, 2, tzinfo=timezone.utc),
+            outcome=PipelineOutcome(
+                media_id=media.id,
+                screenshot=ScreenshotArtifact(
+                    path=Path("/tmp/ignored-stale-feishu.jpg"),
+                    captured_at=media.started_at,
+                ),
+                analysis=AnalysisResult(
+                    event_time=media.started_at,
+                    event_offset_seconds=5.0,
+                    elimination_type=EliminationType.POOP,
+                    stool_score="4",
+                    stool_shape_note="formed",
+                    confidence=0.91,
+                    raw_summary="Detected a poop event.",
+                ),
+                feishu_record_id=None,
+            ),
+        )
+        await task_store.start_feishu_sync(
+            task.id,
+            started_at=datetime(2026, 4, 9, 16, 0, 3, tzinfo=timezone.utc),
+        )
+        processed = await worker.process_next_job()
+
+        assert processed is not None
+        assert processed.feishu_sync_status == SyncStatus.SUCCEEDED
+        assert processed.feishu_record_id == "rec-123"
+        assert processed.feishu_sync_attempts == 2
 
     asyncio.run(run_test())

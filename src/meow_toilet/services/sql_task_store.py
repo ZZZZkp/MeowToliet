@@ -13,6 +13,7 @@ from meow_toilet.domain.entities import (
     MediaTask,
     PetKitMedia,
     PipelineOutcome,
+    StaleRecoveryResult,
     SyncStatus,
 )
 
@@ -280,6 +281,48 @@ class SqlAlchemyMediaTaskStore:
                 statement = statement.limit(limit)
             records = session.execute(statement).scalars().all()
             return [self._to_task(record) for record in records]
+
+    async def recover_stale_tasks(
+        self,
+        *,
+        stale_before: datetime,
+        recovered_at: datetime,
+    ) -> StaleRecoveryResult:
+        with self._session_factory.begin() as session:
+            analysis_records = session.execute(
+                select(MediaTaskRecord)
+                .where(MediaTaskRecord.status == JobStatus.RUNNING.value)
+                .where(MediaTaskRecord.last_attempt_started_at.is_not(None))
+                .where(MediaTaskRecord.last_attempt_started_at <= stale_before),
+            ).scalars().all()
+            for record in analysis_records:
+                record.status = JobStatus.QUEUED.value
+                record.updated_at = recovered_at
+                record.finished_at = recovered_at
+                record.last_error = (
+                    "Recovered stale running analysis task after worker interruption."
+                )
+                record.last_error_kind = "stale_recovery"
+                record.next_attempt_at = recovered_at
+
+            feishu_records = session.execute(
+                select(MediaTaskRecord)
+                .where(MediaTaskRecord.feishu_sync_status == SyncStatus.RUNNING.value)
+                .where(MediaTaskRecord.updated_at <= stale_before),
+            ).scalars().all()
+            for record in feishu_records:
+                record.updated_at = recovered_at
+                record.feishu_sync_status = SyncStatus.PENDING.value
+                record.feishu_sync_last_error = (
+                    "Recovered stale running Feishu sync after worker interruption."
+                )
+                record.feishu_sync_last_error_kind = "stale_recovery"
+                record.feishu_sync_next_attempt_at = recovered_at
+
+            return StaleRecoveryResult(
+                analysis_recovered=len(analysis_records),
+                feishu_sync_recovered=len(feishu_records),
+            )
 
     def dispose(self) -> None:
         self._engine.dispose()

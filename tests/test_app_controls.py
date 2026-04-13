@@ -18,6 +18,7 @@ from meow_toilet.domain.entities import (
     PetKitMedia,
     QueueSnapshot,
     SchedulerPollResult,
+    SyncStatus,
 )
 
 
@@ -163,10 +164,11 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
     sample_task = MediaTask(
         id="device-1:media-77",
         media=sample_media,
-        status=JobStatus.QUEUED,
+        status=JobStatus.SUCCEEDED,
         discovered_at=datetime(2026, 4, 10, 7, 56, tzinfo=UTC),
         updated_at=datetime(2026, 4, 10, 7, 57, tzinfo=UTC),
         attempts=0,
+        feishu_sync_status=SyncStatus.PENDING,
     )
 
     class SnapshotWithTaskService:
@@ -180,9 +182,9 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
                 ),
                 queue=QueueSnapshot(
                     total=1,
-                    queued=1,
+                    queued=0,
                     running=0,
-                    succeeded=0,
+                    succeeded=1,
                     failed=0,
                 ),
                 poll_interval_seconds=300,
@@ -200,6 +202,8 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
         assert 'src="/api/media/cover/device-1:media-77?ts=1775808000"' in response.text
         assert 'data-device-id="device-1"' in response.text
         assert 'data-task-id="device-1:media-77"' in response.text
+        assert "分析 succeeded" in response.text
+        assert "飞书 pending" in response.text
         assert "buildCoverPlaceholder" in response.text
     finally:
         app.dependency_overrides.clear()

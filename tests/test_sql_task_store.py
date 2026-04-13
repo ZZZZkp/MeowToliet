@@ -322,3 +322,90 @@ def test_sql_task_store_keeps_retryable_failure_queued_until_backoff_expires(tmp
         asyncio.run(run_test())
     finally:
         store.dispose()
+
+
+def test_sql_task_store_recovers_stale_running_states(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'tasks-stale.db'}"
+    store = SqlAlchemyMediaTaskStore(database_url)
+    analysis_media = PetKitMedia(
+        id="media-stale-analysis",
+        device_id="device-stale-analysis",
+        started_at=datetime(2026, 4, 9, 18, 0, tzinfo=UTC),
+        cover_url=None,
+        encrypted_download_url="https://example.com/video-stale-analysis.mp4",
+        source_day="2026-04-09",
+    )
+    sync_media = PetKitMedia(
+        id="media-stale-sync",
+        device_id="device-stale-sync",
+        started_at=datetime(2026, 4, 9, 18, 30, tzinfo=UTC),
+        cover_url=None,
+        encrypted_download_url="https://example.com/video-stale-sync.mp4",
+        source_day="2026-04-09",
+    )
+    screenshot_path = tmp_path / "stale-sync.jpg"
+    screenshot_path.write_bytes(b"fake")
+
+    async def run_test() -> None:
+        analysis_task, _ = await store.enqueue_media(
+            analysis_media,
+            discovered_at=datetime(2026, 4, 9, 18, 0, tzinfo=UTC),
+        )
+        sync_task, _ = await store.enqueue_media(
+            sync_media,
+            discovered_at=datetime(2026, 4, 9, 18, 30, tzinfo=UTC),
+        )
+        await store.start_task(
+            analysis_task.id,
+            started_at=datetime(2026, 4, 9, 18, 0, 1, tzinfo=UTC),
+        )
+        await store.start_task(
+            sync_task.id,
+            started_at=datetime(2026, 4, 9, 18, 30, 1, tzinfo=UTC),
+        )
+        await store.mark_succeeded(
+            sync_task.id,
+            completed_at=datetime(2026, 4, 9, 18, 30, 2, tzinfo=UTC),
+            outcome=PipelineOutcome(
+                media_id=sync_media.id,
+                screenshot=ScreenshotArtifact(
+                    path=screenshot_path,
+                    captured_at=datetime(2026, 4, 9, 18, 30, 2, tzinfo=UTC),
+                ),
+                analysis=AnalysisResult(
+                    event_time=datetime(2026, 4, 9, 18, 30, 2, tzinfo=UTC),
+                    event_offset_seconds=2.0,
+                    elimination_type=EliminationType.PEE,
+                    stool_score=None,
+                    stool_shape_note=None,
+                    confidence=0.8,
+                    raw_summary="Pee event detected.",
+                ),
+                feishu_record_id=None,
+            ),
+        )
+        await store.start_feishu_sync(
+            sync_task.id,
+            started_at=datetime(2026, 4, 9, 18, 30, 3, tzinfo=UTC),
+        )
+
+        recovery = await store.recover_stale_tasks(
+            stale_before=datetime(2026, 4, 9, 19, 0, tzinfo=UTC),
+            recovered_at=datetime(2026, 4, 9, 19, 0, 1, tzinfo=UTC),
+        )
+        recovered_analysis = await store.get_task(analysis_task.id)
+        recovered_sync = await store.get_task(sync_task.id)
+
+        assert recovery.analysis_recovered == 1
+        assert recovery.feishu_sync_recovered == 1
+        assert recovered_analysis is not None
+        assert recovered_analysis.status == JobStatus.QUEUED
+        assert recovered_analysis.last_error_kind == "stale_recovery"
+        assert recovered_sync is not None
+        assert recovered_sync.feishu_sync_status == SyncStatus.PENDING
+        assert recovered_sync.feishu_sync_last_error_kind == "stale_recovery"
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        store.dispose()

@@ -11,6 +11,7 @@ from meow_toilet.domain.entities import (
     PetKitMedia,
     PipelineOutcome,
     ScreenshotArtifact,
+    StaleRecoveryResult,
 )
 
 
@@ -111,6 +112,13 @@ class MediaTaskStore(Protocol):
     async def get_task(self, task_id: str) -> MediaTask | None: ...
 
     async def list_tasks(self, *, limit: int | None = None) -> list[MediaTask]: ...
+
+    async def recover_stale_tasks(
+        self,
+        *,
+        stale_before: datetime,
+        recovered_at: datetime,
+    ) -> StaleRecoveryResult: ...
 
 
 class JobDispatcher(Protocol):

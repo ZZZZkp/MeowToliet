@@ -5,7 +5,14 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from meow_toilet.domain.entities import JobStatus, MediaTask, PetKitMedia, PipelineOutcome, SyncStatus
+from meow_toilet.domain.entities import (
+    JobStatus,
+    MediaTask,
+    PetKitMedia,
+    PipelineOutcome,
+    StaleRecoveryResult,
+    SyncStatus,
+)
 
 
 class InMemoryMediaTaskStore:
@@ -241,3 +248,46 @@ class InMemoryMediaTaskStore:
             if limit is None:
                 return tasks
             return tasks[:limit]
+
+    async def recover_stale_tasks(
+        self,
+        *,
+        stale_before: datetime,
+        recovered_at: datetime,
+    ) -> StaleRecoveryResult:
+        async with self._lock:
+            analysis_recovered = 0
+            feishu_sync_recovered = 0
+            for task_id, task in list(self._tasks.items()):
+                updated_task = task
+                if task.status == JobStatus.RUNNING and task.updated_at <= stale_before:
+                    updated_task = replace(
+                        updated_task,
+                        status=JobStatus.QUEUED,
+                        updated_at=recovered_at,
+                        finished_at=recovered_at,
+                        last_error="Recovered stale running analysis task after worker interruption.",
+                        last_error_kind="stale_recovery",
+                        next_attempt_at=recovered_at,
+                    )
+                    analysis_recovered += 1
+                if (
+                    updated_task.feishu_sync_status == SyncStatus.RUNNING
+                    and updated_task.updated_at <= stale_before
+                ):
+                    updated_task = replace(
+                        updated_task,
+                        updated_at=recovered_at,
+                        feishu_sync_status=SyncStatus.PENDING,
+                        feishu_sync_last_error=(
+                            "Recovered stale running Feishu sync after worker interruption."
+                        ),
+                        feishu_sync_last_error_kind="stale_recovery",
+                        feishu_sync_next_attempt_at=recovered_at,
+                    )
+                    feishu_sync_recovered += 1
+                self._tasks[task_id] = updated_task
+            return StaleRecoveryResult(
+                analysis_recovered=analysis_recovered,
+                feishu_sync_recovered=feishu_sync_recovered,
+            )

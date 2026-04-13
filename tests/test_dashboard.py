@@ -65,6 +65,8 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
             datetime(2026, 4, 9, 8, 2, tzinfo=UTC),
             datetime(2026, 4, 9, 8, 3, tzinfo=UTC),
             datetime(2026, 4, 9, 8, 4, tzinfo=UTC),
+            datetime(2026, 4, 9, 8, 5, tzinfo=UTC),
+            datetime(2026, 4, 9, 8, 6, tzinfo=UTC),
         ],
     )
 
@@ -78,6 +80,7 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
             pipeline=SuccessfulPipeline(),
             feishu_sync_service=SuccessfulFeishuSyncService(),
             retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+            stale_task_timeout_seconds=1800,
             now_provider=lambda: next(clock),
         )
         await worker.process_next_job()

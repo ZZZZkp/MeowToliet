@@ -86,7 +86,6 @@
 
       .state {
         display: inline-flex;
-        margin-top: 10px;
         padding: 8px 12px;
         border-radius: 999px;
         background: var(--accent-soft);
@@ -162,6 +161,13 @@
         justify-content: space-between;
         gap: 12px;
         align-items: start;
+      }
+
+      .state-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
       }
 
       .task-title {
@@ -346,16 +352,28 @@
           <div class="task-body">
             <div class="task-header">
               <h3 class="task-title">{{ task.media.device_id }}</h3>
-              <div
-                class="state {% if task.status.value == 'failed' %}fail{% elif task.status.value == 'queued' %}warn{% endif %}"
-              >
-                {{ task.status.value }}
+              <div class="state-row">
+                <div
+                  class="state {% if task.status.value == 'failed' %}fail{% elif task.status.value in ['queued', 'running'] %}warn{% endif %}"
+                >
+                  分析 {{ task.status.value }}
+                </div>
+                {% if task.status.value == 'succeeded' and task.feishu_sync_status %}
+                <div
+                  class="state {% if task.feishu_sync_status.value == 'failed' %}fail{% elif task.feishu_sync_status.value in ['pending', 'running'] %}warn{% endif %}"
+                >
+                  飞书 {{ task.feishu_sync_status.value }}
+                </div>
+                {% endif %}
               </div>
             </div>
             <div class="task-copy mono">{{ task.media.id }}</div>
             <div class="task-copy">
               来源日期 {{ task.media.source_day }} · 发现时间 {{ task.discovered_at.isoformat() }}
             </div>
+            {% if task.feishu_record_id %}
+            <div class="task-copy mono">Feishu Record {{ task.feishu_record_id }}</div>
+            {% endif %}
             {% if task.elimination_type %}
             <div class="task-copy">
               {{ task.elimination_type.value }} · 置信度 {{ "%.2f"|format(task.confidence or 0.0) }}
@@ -366,6 +384,11 @@
             {% endif %}
             {% if task.last_error %}
             <div class="task-copy" style="color: var(--rose)">{{ task.last_error }}</div>
+            {% endif %}
+            {% if task.feishu_sync_last_error %}
+            <div class="task-copy" style="color: var(--rose)">
+              飞书同步失败：{{ task.feishu_sync_last_error }}
+            </div>
             {% endif %}
             <div class="control-row">
               <button class="button secondary retry-button" data-task-id="{{ task.id }}" type="button">

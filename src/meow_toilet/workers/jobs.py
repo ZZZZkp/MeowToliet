@@ -5,6 +5,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from datetime import timedelta
 
 from arq.connections import RedisSettings
 
@@ -37,16 +38,19 @@ class MediaJobWorker:
         pipeline: LitterEventPipeline,
         feishu_sync_service: FeishuSyncService,
         retry_policy: RetryPolicy,
+        stale_task_timeout_seconds: int,
         now_provider: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._task_store = task_store
         self._pipeline = pipeline
         self._feishu_sync_service = feishu_sync_service
         self._retry_policy = retry_policy
+        self._stale_task_timeout_seconds = stale_task_timeout_seconds
         self._now_provider = now_provider
         self._logger = structlog.get_logger(__name__)
 
     async def process_task(self, task_id: str) -> MediaTask | None:
+        await self._recover_stale_tasks()
         task = await self._task_store.get_task(task_id)
         if task is None:
             return None
@@ -69,6 +73,7 @@ class MediaJobWorker:
         return task
 
     async def process_next_job(self) -> MediaTask | None:
+        await self._recover_stale_tasks()
         task = await self._task_store.start_next_task(started_at=self._now_provider())
         if task is not None:
             return await self._process_started_task(task)
@@ -76,6 +81,21 @@ class MediaJobWorker:
         if sync_task is not None:
             return await self._process_feishu_sync(sync_task)
         return None
+
+    async def _recover_stale_tasks(self) -> None:
+        recovered_at = self._now_provider()
+        stale_before = recovered_at - timedelta(seconds=self._stale_task_timeout_seconds)
+        recovery = await self._task_store.recover_stale_tasks(
+            stale_before=stale_before,
+            recovered_at=recovered_at,
+        )
+        if recovery.analysis_recovered or recovery.feishu_sync_recovered:
+            self._logger.warning(
+                "stale_tasks_recovered",
+                analysis_recovered=recovery.analysis_recovered,
+                feishu_sync_recovered=recovery.feishu_sync_recovered,
+                stale_task_timeout_seconds=self._stale_task_timeout_seconds,
+            )
 
     async def _process_started_task(self, task: MediaTask) -> MediaTask:
         try:
@@ -203,6 +223,7 @@ async def process_media_job(media_key: str) -> dict[str, str | int | None]:
         pipeline=pipeline,
         feishu_sync_service=feishu_sync_service,
         retry_policy=retry_policy,
+        stale_task_timeout_seconds=settings.worker_stale_task_timeout_seconds,
     )
     try:
         task = await worker.process_task(media_key)
@@ -254,6 +275,7 @@ async def _run_cli(args: argparse.Namespace) -> int:
         pipeline=pipeline,
         feishu_sync_service=feishu_sync_service,
         retry_policy=retry_policy,
+        stale_task_timeout_seconds=settings.worker_stale_task_timeout_seconds,
     )
     logger = structlog.get_logger(__name__)
 

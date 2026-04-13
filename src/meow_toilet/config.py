@@ -74,7 +74,7 @@ class Settings:
     )
     petkit_region: str = field(default_factory=lambda: _read_str("PETKIT_REGION", "cn"))
     petkit_poll_interval_seconds: int = field(
-        default_factory=lambda: _read_int("PETKIT_POLL_INTERVAL_SECONDS", 300),
+        default_factory=lambda: _read_int("PETKIT_POLL_INTERVAL_SECONDS", 21600),
     )
     petkit_session_refresh_seconds: int = field(
         default_factory=lambda: _read_int("PETKIT_SESSION_REFRESH_SECONDS", 1800),
@@ -154,6 +154,9 @@ class Settings:
     worker_idle_sleep_seconds: int = field(
         default_factory=lambda: _read_int("WORKER_IDLE_SLEEP_SECONDS", 5),
     )
+    worker_stale_task_timeout_seconds: int = field(
+        default_factory=lambda: _read_int("WORKER_STALE_TASK_TIMEOUT_SECONDS", 1800),
+    )
 
     @property
     def petkit_credentials_configured(self) -> bool:
@@ -203,6 +206,7 @@ class Settings:
             "worker_retry_backoff_seconds": self.worker_retry_backoff_seconds,
             "worker_retry_max_backoff_seconds": self.worker_retry_max_backoff_seconds,
             "worker_idle_sleep_seconds": self.worker_idle_sleep_seconds,
+            "worker_stale_task_timeout_seconds": self.worker_stale_task_timeout_seconds,
         }
 
     @property

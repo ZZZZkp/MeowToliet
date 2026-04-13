@@ -121,6 +121,12 @@ class SchedulerPollResult:
 
 
 @dataclass(frozen=True, slots=True)
+class StaleRecoveryResult:
+    analysis_recovered: int = 0
+    feishu_sync_recovered: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class QueueSnapshot:
     total: int
     queued: int
