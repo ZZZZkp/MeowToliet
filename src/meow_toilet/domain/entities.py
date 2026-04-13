@@ -20,6 +20,13 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
+class SyncStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True, slots=True)
 class PetKitDevice:
     id: str
@@ -86,7 +93,14 @@ class MediaTask:
     last_error_kind: str | None = None
     next_attempt_at: datetime | None = None
     finished_at: datetime | None = None
+    screenshot_path: Path | None = None
     feishu_record_id: str | None = None
+    feishu_sync_status: SyncStatus | None = None
+    feishu_sync_attempts: int = 0
+    feishu_sync_last_error: str | None = None
+    feishu_sync_last_error_kind: str | None = None
+    feishu_sync_next_attempt_at: datetime | None = None
+    feishu_synced_at: datetime | None = None
     event_time: datetime | None = None
     elimination_type: EliminationType | None = None
     stool_score: str | None = None

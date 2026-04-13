@@ -11,6 +11,7 @@ from meow_toilet.domain.entities import (
     AnalysisResult,
     EliminationType,
     JobStatus,
+    MediaTask,
     PetKitMedia,
     PipelineOutcome,
     ScreenshotArtifact,
@@ -40,8 +41,13 @@ class SuccessfulPipeline:
                 captured_at=request.media.started_at,
             ),
             analysis=analysis,
-            feishu_record_id="rec-dashboard",
+            feishu_record_id=None,
         )
+
+
+class SuccessfulFeishuSyncService:
+    async def sync_task(self, task: MediaTask) -> str | None:
+        return "rec-dashboard"
 
 
 def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
@@ -59,6 +65,8 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
             datetime(2026, 4, 9, 8, 0, tzinfo=UTC),
             datetime(2026, 4, 9, 8, 1, tzinfo=UTC),
             datetime(2026, 4, 9, 8, 2, tzinfo=UTC),
+            datetime(2026, 4, 9, 8, 3, tzinfo=UTC),
+            datetime(2026, 4, 9, 8, 4, tzinfo=UTC),
         ],
     )
 
@@ -70,9 +78,11 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
         worker = MediaJobWorker(
             task_store=task_store,
             pipeline=SuccessfulPipeline(),
+            feishu_sync_service=SuccessfulFeishuSyncService(),
             retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
             now_provider=lambda: next(clock),
         )
+        await worker.process_next_job()
         await worker.process_next_job()
 
     asyncio.run(seed_store())

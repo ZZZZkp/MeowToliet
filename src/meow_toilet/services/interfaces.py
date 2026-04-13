@@ -63,6 +63,10 @@ class MediaTaskStore(Protocol):
 
     async def start_next_task(self, started_at: datetime) -> MediaTask | None: ...
 
+    async def start_feishu_sync(self, task_id: str, started_at: datetime) -> MediaTask | None: ...
+
+    async def start_next_feishu_sync(self, started_at: datetime) -> MediaTask | None: ...
+
     async def mark_succeeded(
         self,
         task_id: str,
@@ -71,6 +75,24 @@ class MediaTaskStore(Protocol):
     ) -> MediaTask: ...
 
     async def mark_failed(
+        self,
+        task_id: str,
+        failed_at: datetime,
+        error: str,
+        *,
+        error_kind: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> MediaTask: ...
+
+    async def mark_feishu_sync_succeeded(
+        self,
+        task_id: str,
+        synced_at: datetime,
+        *,
+        feishu_record_id: str | None,
+    ) -> MediaTask: ...
+
+    async def mark_feishu_sync_failed(
         self,
         task_id: str,
         failed_at: datetime,

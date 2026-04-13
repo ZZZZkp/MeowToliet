@@ -14,6 +14,7 @@ Dockerized dashboard:
 - Feishu Bitable record creation with screenshot attachment and single-select field mapping is working.
 - Scheduler and worker can now run as long-lived Docker services.
 - Worker failures can now auto-retry with exponential backoff before becoming terminal failures.
+- Analysis now persists screenshots to local storage before Feishu sync, so Feishu retries do not need to re-run Gemini.
 - Gemini and Feishu request failures now emit more detailed structured logs for timeout, rate limit, and response-format issues.
 - Dashboard and `/api/dashboard` now read from a shared task snapshot flow.
 - Manual poll, process-next, and per-task retry actions are wired through the dashboard.
@@ -73,6 +74,9 @@ background services:
 ```bash
 docker compose logs -f scheduler worker
 ```
+
+Screenshots extracted from analyzed events are now persisted under `./tmp/screenshots` and reused by
+the background Feishu sync stage.
 
 ### Docker test mode
 

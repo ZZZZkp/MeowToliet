@@ -46,6 +46,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
+      SCREENSHOT_ROOT: ./tmp/screenshots
       PETKIT_EMAIL: ${PETKIT_EMAIL:-}
       PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
       PETKIT_REGION: ${PETKIT_REGION:-cn}
@@ -99,6 +100,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
+      SCREENSHOT_ROOT: ./tmp/screenshots
       PETKIT_EMAIL: ${PETKIT_EMAIL:-}
       PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
       PETKIT_REGION: ${PETKIT_REGION:-cn}
@@ -154,6 +156,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
+      SCREENSHOT_ROOT: ./tmp/screenshots
       PETKIT_EMAIL: ${PETKIT_EMAIL:-}
       PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
       PETKIT_REGION: ${PETKIT_REGION:-cn}
@@ -207,6 +210,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
+      SCREENSHOT_ROOT: ./tmp/screenshots
     volumes:
       - .:/app
     command: ["sh", "-lc", "PYTHONPATH=src pytest -q"]

@@ -11,6 +11,7 @@ from meow_toilet.domain.entities import (
     PetKitMedia,
     PipelineOutcome,
     ScreenshotArtifact,
+    SyncStatus,
 )
 from meow_toilet.services.sql_task_store import SqlAlchemyMediaTaskStore
 
@@ -74,15 +75,83 @@ def test_sql_task_store_persists_and_updates_task_lifecycle(tmp_path: Path) -> N
         assert running_task.status == JobStatus.RUNNING
         assert running_task.attempts == 1
         assert completed_task.status == JobStatus.SUCCEEDED
-        assert completed_task.feishu_record_id == "rec-1"
+        assert completed_task.feishu_record_id is None
+        assert completed_task.feishu_sync_status == SyncStatus.PENDING
         assert completed_task.stool_score == "4"
         assert completed_task.raw_summary == "Poop event detected."
         assert fetched is not None
         assert fetched.status == JobStatus.SUCCEEDED
+        assert fetched.screenshot_path is not None
         assert fetched.media.pet_name == "翠饼"
         assert fetched.event_time is not None
         assert fetched.event_time.tzinfo is not None
         assert len(listed) == 1
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        store.dispose()
+
+
+def test_sql_task_store_tracks_feishu_sync_lifecycle(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'tasks-sync.db'}"
+    store = SqlAlchemyMediaTaskStore(database_url)
+    media = PetKitMedia(
+        id="media-5",
+        device_id="device-5",
+        started_at=datetime(2026, 4, 9, 13, 0, tzinfo=UTC),
+        cover_url=None,
+        encrypted_download_url="https://example.com/video-5.mp4",
+        source_day="2026-04-09",
+    )
+    screenshot_path = tmp_path / "event-5.jpg"
+    screenshot_path.write_bytes(b"fake")
+
+    async def run_test() -> None:
+        task, _ = await store.enqueue_media(
+            media,
+            discovered_at=datetime(2026, 4, 9, 13, 1, tzinfo=UTC),
+        )
+        await store.start_task(
+            task.id,
+            started_at=datetime(2026, 4, 9, 13, 2, tzinfo=UTC),
+        )
+        analyzed = await store.mark_succeeded(
+            task.id,
+            completed_at=datetime(2026, 4, 9, 13, 3, tzinfo=UTC),
+            outcome=PipelineOutcome(
+                media_id=media.id,
+                screenshot=ScreenshotArtifact(
+                    path=screenshot_path,
+                    captured_at=datetime(2026, 4, 9, 13, 0, 3, tzinfo=UTC),
+                ),
+                analysis=AnalysisResult(
+                    event_time=datetime(2026, 4, 9, 13, 0, 3, tzinfo=UTC),
+                    event_offset_seconds=3.0,
+                    elimination_type=EliminationType.PEE,
+                    stool_score=None,
+                    stool_shape_note=None,
+                    confidence=0.72,
+                    raw_summary="Pee event detected.",
+                ),
+                feishu_record_id=None,
+            ),
+        )
+        syncing = await store.start_next_feishu_sync(
+            started_at=datetime(2026, 4, 9, 13, 4, tzinfo=UTC),
+        )
+        synced = await store.mark_feishu_sync_succeeded(
+            task.id,
+            synced_at=datetime(2026, 4, 9, 13, 5, tzinfo=UTC),
+            feishu_record_id="rec-sync-1",
+        )
+
+        assert analyzed.feishu_sync_status == SyncStatus.PENDING
+        assert syncing is not None
+        assert syncing.feishu_sync_status == SyncStatus.RUNNING
+        assert synced.feishu_sync_status == SyncStatus.SUCCEEDED
+        assert synced.feishu_record_id == "rec-sync-1"
+        assert synced.feishu_synced_at == datetime(2026, 4, 9, 13, 5, tzinfo=UTC)
 
     try:
         asyncio.run(run_test())

@@ -11,6 +11,7 @@ from meow_toilet.domain.entities import (
     PetKitMedia,
     PipelineOutcome,
     ScreenshotArtifact,
+    SyncStatus,
 )
 from meow_toilet.errors import ExternalServiceError
 from meow_toilet.services.retries import RetryPolicy
@@ -36,7 +37,7 @@ class SuccessfulPipeline:
                 captured_at=request.media.started_at,
             ),
             analysis=analysis,
-            feishu_record_id="rec-123",
+            feishu_record_id=None,
         )
 
 
@@ -56,6 +57,22 @@ class RetryableFailingPipeline:
         )
 
 
+class SuccessfulFeishuSyncService:
+    async def sync_task(self, task: MediaTask) -> str | None:
+        return "rec-123"
+
+
+class RetryableFailingFeishuSyncService:
+    async def sync_task(self, task: MediaTask) -> str | None:
+        raise ExternalServiceError(
+            service="feishu",
+            operation="create_record",
+            message="rate limited",
+            kind="rate_limit",
+            retryable=True,
+        )
+
+
 def test_worker_marks_task_succeeded_after_pipeline_run() -> None:
     media = PetKitMedia(
         id="media-1",
@@ -71,11 +88,14 @@ def test_worker_marks_task_succeeded_after_pipeline_run() -> None:
             datetime(2026, 4, 9, 10, 0, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 10, 1, tzinfo=timezone.utc),
             datetime(2026, 4, 9, 10, 2, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 10, 3, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 10, 4, tzinfo=timezone.utc),
         ],
     )
     worker = MediaJobWorker(
         task_store=task_store,
         pipeline=SuccessfulPipeline(),
+        feishu_sync_service=SuccessfulFeishuSyncService(),
         retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
         now_provider=lambda: next(clock),
     )
@@ -87,9 +107,14 @@ def test_worker_marks_task_succeeded_after_pipeline_run() -> None:
         assert task is not None
         assert task.status == JobStatus.SUCCEEDED
         assert task.attempts == 1
-        assert task.feishu_record_id == "rec-123"
+        assert task.feishu_record_id is None
+        assert task.feishu_sync_status == SyncStatus.PENDING
         assert task.elimination_type == EliminationType.POOP
         assert task.confidence == 0.91
+        synced = await worker.process_next_job()
+        assert synced is not None
+        assert synced.feishu_record_id == "rec-123"
+        assert synced.feishu_sync_status == SyncStatus.SUCCEEDED
 
     asyncio.run(run_test())
 
@@ -113,6 +138,7 @@ def test_worker_marks_task_failed_when_pipeline_raises() -> None:
     worker = MediaJobWorker(
         task_store=task_store,
         pipeline=FailingPipeline(),
+        feishu_sync_service=SuccessfulFeishuSyncService(),
         retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
         now_provider=lambda: next(clock),
     )
@@ -148,6 +174,7 @@ def test_worker_schedules_retry_with_backoff_for_retryable_failures() -> None:
     worker = MediaJobWorker(
         task_store=task_store,
         pipeline=RetryableFailingPipeline(),
+        feishu_sync_service=SuccessfulFeishuSyncService(),
         retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
         now_provider=lambda: next(clock),
     )
@@ -162,5 +189,60 @@ def test_worker_schedules_retry_with_backoff_for_retryable_failures() -> None:
         assert task.last_error_kind == "timeout"
         assert task.last_error is not None
         assert task.next_attempt_at == datetime(2026, 4, 9, 12, 1, 30, tzinfo=timezone.utc)
+
+    asyncio.run(run_test())
+
+
+def test_worker_retries_feishu_sync_after_analysis_succeeds() -> None:
+    media = PetKitMedia(
+        id="media-4",
+        device_id="device-4",
+        started_at=datetime(2026, 4, 9, 13, 0, tzinfo=timezone.utc),
+        cover_url=None,
+        encrypted_download_url="https://example.com/video-4.mp4",
+        source_day="2026-04-09",
+    )
+    task_store = InMemoryMediaTaskStore()
+    clock = iter(
+        [
+            datetime(2026, 4, 9, 13, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 13, 1, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 13, 2, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 13, 3, tzinfo=timezone.utc),
+            datetime(2026, 4, 9, 13, 4, tzinfo=timezone.utc),
+        ],
+    )
+    worker = MediaJobWorker(
+        task_store=task_store,
+        pipeline=SuccessfulPipeline(),
+        feishu_sync_service=RetryableFailingFeishuSyncService(),
+        retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
+        now_provider=lambda: next(clock),
+    )
+
+    async def run_test() -> None:
+        await task_store.enqueue_media(
+            media,
+            discovered_at=datetime(2026, 4, 9, 12, 59, tzinfo=timezone.utc),
+        )
+        analyzed = await worker.process_next_job()
+        retried_sync = await worker.process_next_job()
+
+        assert analyzed is not None
+        assert analyzed.status == JobStatus.SUCCEEDED
+        assert analyzed.feishu_sync_status == SyncStatus.PENDING
+        assert retried_sync is not None
+        assert retried_sync.feishu_sync_status == SyncStatus.PENDING
+        assert retried_sync.feishu_sync_attempts == 1
+        assert retried_sync.feishu_sync_last_error_kind == "rate_limit"
+        assert retried_sync.feishu_sync_next_attempt_at == datetime(
+            2026,
+            4,
+            9,
+            13,
+            4,
+            30,
+            tzinfo=timezone.utc,
+        )
 
     asyncio.run(run_test())

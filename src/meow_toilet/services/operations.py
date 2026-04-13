@@ -9,6 +9,8 @@ from meow_toilet.adapters.video import FfmpegVideoProcessor
 from meow_toilet.config import Settings, get_settings
 from meow_toilet.domain.entities import MediaTask, SchedulerPollResult
 from meow_toilet.scheduler.service import PetKitPollingScheduler
+from meow_toilet.services.artifacts import PersistentArtifactStore
+from meow_toilet.services.feishu_sync import FeishuSyncService
 from meow_toilet.services.interfaces import JobDispatcher, MediaTaskStore
 from meow_toilet.services.pipeline import LitterEventPipeline
 from meow_toilet.services.retries import RetryPolicy
@@ -67,9 +69,10 @@ class ManualOperationsService:
             petkit=petkit,
             video_processor=FfmpegVideoProcessor(),
             analyzer=analyzer,
-            feishu=feishu,
             temp_store=TemporaryMediaStore(settings.temp_media_root),
+            artifact_store=PersistentArtifactStore(settings.screenshot_root),
         )
+        feishu_sync_service = FeishuSyncService(feishu=feishu)
         retry_policy = RetryPolicy(
             max_attempts=settings.worker_retry_max_attempts,
             backoff_seconds=settings.worker_retry_backoff_seconds,
@@ -78,6 +81,7 @@ class ManualOperationsService:
         return MediaJobWorker(
             task_store=self._task_store,
             pipeline=pipeline,
+            feishu_sync_service=feishu_sync_service,
             retry_policy=retry_policy,
         ), (
             petkit,

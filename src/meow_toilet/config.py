@@ -130,6 +130,9 @@ class Settings:
     temp_media_root: Path = field(
         default_factory=lambda: Path(_read_str("TEMP_MEDIA_ROOT", "./tmp/media")),
     )
+    screenshot_root: Path = field(
+        default_factory=lambda: Path(_read_str("SCREENSHOT_ROOT", "./tmp/screenshots")),
+    )
     max_concurrent_decodes: int = field(
         default_factory=lambda: _read_int("MAX_CONCURRENT_DECODES", 2),
     )
@@ -189,6 +192,7 @@ class Settings:
             "feishu_bitable_app_token": self.feishu_bitable_app_token,
             "feishu_bitable_table_id": self.feishu_bitable_table_id,
             "temp_media_root": str(self.temp_media_root),
+            "screenshot_root": str(self.screenshot_root),
             "max_concurrent_decodes": self.max_concurrent_decodes,
             "max_concurrent_analyses": self.max_concurrent_analyses,
             "worker_retry_max_attempts": self.worker_retry_max_attempts,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +13,7 @@ from meow_toilet.domain.entities import (
     MediaTask,
     PetKitMedia,
     PipelineOutcome,
+    SyncStatus,
 )
 
 Base = declarative_base()
@@ -37,7 +39,14 @@ class MediaTaskRecord(Base):
     finished_at = Column(DateTime(timezone=True), nullable=True)
     next_attempt_at = Column(DateTime(timezone=True), nullable=True, index=True)
     last_attempt_started_at = Column(DateTime(timezone=True), nullable=True)
+    screenshot_path = Column(Text(), nullable=True)
     feishu_record_id = Column(String(255), nullable=True)
+    feishu_sync_status = Column(String(32), nullable=True, index=True)
+    feishu_sync_attempts = Column(Integer(), nullable=False, default=0)
+    feishu_sync_last_error = Column(Text(), nullable=True)
+    feishu_sync_last_error_kind = Column(String(64), nullable=True)
+    feishu_sync_next_attempt_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    feishu_synced_at = Column(DateTime(timezone=True), nullable=True)
     event_time = Column(DateTime(timezone=True), nullable=True)
     elimination_type = Column(String(32), nullable=True)
     stool_score = Column(String(32), nullable=True)
@@ -118,6 +127,40 @@ class SqlAlchemyMediaTaskStore:
                 return None
             return self._mark_running(record, started_at)
 
+    async def start_feishu_sync(self, task_id: str, started_at: datetime) -> MediaTask | None:
+        with self._session_factory.begin() as session:
+            record = session.get(MediaTaskRecord, task_id)
+            if record is None or record.status != JobStatus.SUCCEEDED.value:
+                return None
+            if record.feishu_sync_status not in {
+                SyncStatus.PENDING.value,
+                SyncStatus.FAILED.value,
+            }:
+                return None
+            return self._mark_feishu_sync_running(record, started_at)
+
+    async def start_next_feishu_sync(self, started_at: datetime) -> MediaTask | None:
+        with self._session_factory.begin() as session:
+            record = session.execute(
+                select(MediaTaskRecord)
+                .where(MediaTaskRecord.status == JobStatus.SUCCEEDED.value)
+                .where(MediaTaskRecord.feishu_sync_status == SyncStatus.PENDING.value)
+                .where(
+                    (MediaTaskRecord.feishu_sync_next_attempt_at.is_(None))
+                    | (MediaTaskRecord.feishu_sync_next_attempt_at <= started_at),
+                )
+                .order_by(
+                    MediaTaskRecord.feishu_sync_next_attempt_at.asc().nullsfirst(),
+                    MediaTaskRecord.updated_at.asc(),
+                    MediaTaskRecord.id.asc(),
+                )
+                .limit(1),
+                execution_options={"populate_existing": True},
+            ).scalar_one_or_none()
+            if record is None:
+                return None
+            return self._mark_feishu_sync_running(record, started_at)
+
     async def mark_succeeded(
         self,
         task_id: str,
@@ -132,7 +175,11 @@ class SqlAlchemyMediaTaskStore:
             record.updated_at = completed_at
             record.finished_at = completed_at
             record.last_error = None
-            record.feishu_record_id = outcome.feishu_record_id
+            record.screenshot_path = str(outcome.screenshot.path)
+            record.feishu_sync_status = SyncStatus.PENDING.value
+            record.feishu_sync_next_attempt_at = completed_at
+            record.feishu_sync_last_error = None
+            record.feishu_sync_last_error_kind = None
             record.event_time = outcome.analysis.event_time
             record.elimination_type = outcome.analysis.elimination_type.value
             record.stool_score = outcome.analysis.stool_score
@@ -162,6 +209,52 @@ class SqlAlchemyMediaTaskStore:
             record.last_error = error
             record.last_error_kind = error_kind
             record.next_attempt_at = next_attempt_at
+            session.flush()
+            session.refresh(record)
+            return self._to_task(record)
+
+    async def mark_feishu_sync_succeeded(
+        self,
+        task_id: str,
+        synced_at: datetime,
+        *,
+        feishu_record_id: str | None,
+    ) -> MediaTask:
+        with self._session_factory.begin() as session:
+            record = session.get(MediaTaskRecord, task_id)
+            if record is None:
+                raise KeyError(f"Unknown task {task_id}.")
+            record.updated_at = synced_at
+            record.feishu_record_id = feishu_record_id or record.feishu_record_id
+            record.feishu_sync_status = SyncStatus.SUCCEEDED.value
+            record.feishu_sync_last_error = None
+            record.feishu_sync_last_error_kind = None
+            record.feishu_sync_next_attempt_at = None
+            record.feishu_synced_at = synced_at
+            session.flush()
+            session.refresh(record)
+            return self._to_task(record)
+
+    async def mark_feishu_sync_failed(
+        self,
+        task_id: str,
+        failed_at: datetime,
+        error: str,
+        *,
+        error_kind: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> MediaTask:
+        with self._session_factory.begin() as session:
+            record = session.get(MediaTaskRecord, task_id)
+            if record is None:
+                raise KeyError(f"Unknown task {task_id}.")
+            record.updated_at = failed_at
+            record.feishu_sync_status = (
+                SyncStatus.PENDING.value if next_attempt_at is not None else SyncStatus.FAILED.value
+            )
+            record.feishu_sync_last_error = error
+            record.feishu_sync_last_error_kind = error_kind
+            record.feishu_sync_next_attempt_at = next_attempt_at
             session.flush()
             session.refresh(record)
             return self._to_task(record)
@@ -213,10 +306,49 @@ class SqlAlchemyMediaTaskStore:
                         f"{self._datetime_column_type(connection.engine.dialect.name)}"
                     ),
                 )
+            if "screenshot_path" not in existing_columns:
+                connection.execute(text("ALTER TABLE media_tasks ADD COLUMN screenshot_path TEXT"))
+            if "feishu_sync_status" not in existing_columns:
+                connection.execute(text("ALTER TABLE media_tasks ADD COLUMN feishu_sync_status VARCHAR(32)"))
+            if "feishu_sync_attempts" not in existing_columns:
+                connection.execute(
+                    text("ALTER TABLE media_tasks ADD COLUMN feishu_sync_attempts INTEGER DEFAULT 0"),
+                )
+            if "feishu_sync_last_error" not in existing_columns:
+                connection.execute(text("ALTER TABLE media_tasks ADD COLUMN feishu_sync_last_error TEXT"))
+            if "feishu_sync_last_error_kind" not in existing_columns:
+                connection.execute(
+                    text("ALTER TABLE media_tasks ADD COLUMN feishu_sync_last_error_kind VARCHAR(64)"),
+                )
+            if "feishu_sync_next_attempt_at" not in existing_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE media_tasks ADD COLUMN feishu_sync_next_attempt_at "
+                        f"{self._datetime_column_type(connection.engine.dialect.name)}"
+                    ),
+                )
+            if "feishu_synced_at" not in existing_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE media_tasks ADD COLUMN feishu_synced_at "
+                        f"{self._datetime_column_type(connection.engine.dialect.name)}"
+                    ),
+                )
             existing_indexes = {index["name"] for index in schema.get_indexes("media_tasks")}
             if "ix_media_tasks_next_attempt_at" not in existing_indexes:
                 connection.execute(
                     text("CREATE INDEX ix_media_tasks_next_attempt_at ON media_tasks (next_attempt_at)"),
+                )
+            if "ix_media_tasks_feishu_sync_status" not in existing_indexes:
+                connection.execute(
+                    text("CREATE INDEX ix_media_tasks_feishu_sync_status ON media_tasks (feishu_sync_status)"),
+                )
+            if "ix_media_tasks_feishu_sync_next_attempt_at" not in existing_indexes:
+                connection.execute(
+                    text(
+                        "CREATE INDEX ix_media_tasks_feishu_sync_next_attempt_at "
+                        "ON media_tasks (feishu_sync_next_attempt_at)"
+                    ),
                 )
 
     def _mark_running(self, record: MediaTaskRecord, started_at: datetime) -> MediaTask:
@@ -228,6 +360,15 @@ class SqlAlchemyMediaTaskStore:
         record.next_attempt_at = None
         record.last_attempt_started_at = started_at
         record.attempts += 1
+        return self._to_task(record)
+
+    def _mark_feishu_sync_running(self, record: MediaTaskRecord, started_at: datetime) -> MediaTask:
+        record.updated_at = started_at
+        record.feishu_sync_status = SyncStatus.RUNNING.value
+        record.feishu_sync_attempts += 1
+        record.feishu_sync_last_error = None
+        record.feishu_sync_last_error_kind = None
+        record.feishu_sync_next_attempt_at = None
         return self._to_task(record)
 
     @staticmethod
@@ -248,6 +389,12 @@ class SqlAlchemyMediaTaskStore:
                 elimination_type = EliminationType(record.elimination_type)
             except ValueError:
                 elimination_type = EliminationType.UNKNOWN
+        feishu_sync_status = None
+        if record.feishu_sync_status:
+            try:
+                feishu_sync_status = SyncStatus(record.feishu_sync_status)
+            except ValueError:
+                feishu_sync_status = SyncStatus.FAILED
         return MediaTask(
             id=record.id,
             media=PetKitMedia(
@@ -267,7 +414,16 @@ class SqlAlchemyMediaTaskStore:
             last_error_kind=record.last_error_kind,
             next_attempt_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.next_attempt_at),
             finished_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.finished_at),
+            screenshot_path=None if record.screenshot_path is None else Path(record.screenshot_path),
             feishu_record_id=record.feishu_record_id,
+            feishu_sync_status=feishu_sync_status,
+            feishu_sync_attempts=record.feishu_sync_attempts,
+            feishu_sync_last_error=record.feishu_sync_last_error,
+            feishu_sync_last_error_kind=record.feishu_sync_last_error_kind,
+            feishu_sync_next_attempt_at=SqlAlchemyMediaTaskStore._coerce_datetime(
+                record.feishu_sync_next_attempt_at,
+            ),
+            feishu_synced_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.feishu_synced_at),
             event_time=SqlAlchemyMediaTaskStore._coerce_datetime(record.event_time),
             elimination_type=elimination_type,
             stool_score=record.stool_score,

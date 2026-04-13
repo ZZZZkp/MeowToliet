@@ -13,9 +13,11 @@ from meow_toilet.adapters.gemini import GeminiAnalyzer
 from meow_toilet.adapters.petkit import PetKitApiAdapter
 from meow_toilet.adapters.video import FfmpegVideoProcessor
 from meow_toilet.config import get_settings
-from meow_toilet.domain.entities import MediaTask, PipelineRequest
+from meow_toilet.domain.entities import JobStatus, MediaTask, PipelineRequest, SyncStatus
 from meow_toilet.observability import configure_logging
 from meow_toilet.services.interfaces import MediaTaskStore
+from meow_toilet.services.artifacts import PersistentArtifactStore
+from meow_toilet.services.feishu_sync import FeishuSyncService
 from meow_toilet.services.pipeline import LitterEventPipeline
 from meow_toilet.services.retries import RetryPolicy, classify_failure
 from meow_toilet.services.sql_task_store import SqlAlchemyMediaTaskStore
@@ -33,26 +35,47 @@ class MediaJobWorker:
         *,
         task_store: MediaTaskStore,
         pipeline: LitterEventPipeline,
+        feishu_sync_service: FeishuSyncService,
         retry_policy: RetryPolicy,
         now_provider: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._task_store = task_store
         self._pipeline = pipeline
+        self._feishu_sync_service = feishu_sync_service
         self._retry_policy = retry_policy
         self._now_provider = now_provider
         self._logger = structlog.get_logger(__name__)
 
     async def process_task(self, task_id: str) -> MediaTask | None:
-        task = await self._task_store.start_task(task_id, started_at=self._now_provider())
+        task = await self._task_store.get_task(task_id)
         if task is None:
             return None
-        return await self._process_started_task(task)
+        if task.status in {JobStatus.QUEUED, JobStatus.FAILED}:
+            started = await self._task_store.start_task(task_id, started_at=self._now_provider())
+            if started is None:
+                return task
+            return await self._process_started_task(started)
+        if task.status == JobStatus.SUCCEEDED and task.feishu_sync_status in {
+            SyncStatus.PENDING,
+            SyncStatus.FAILED,
+        }:
+            started_sync = await self._task_store.start_feishu_sync(
+                task_id,
+                started_at=self._now_provider(),
+            )
+            if started_sync is None:
+                return task
+            return await self._process_feishu_sync(started_sync)
+        return task
 
     async def process_next_job(self) -> MediaTask | None:
         task = await self._task_store.start_next_task(started_at=self._now_provider())
-        if task is None:
-            return None
-        return await self._process_started_task(task)
+        if task is not None:
+            return await self._process_started_task(task)
+        sync_task = await self._task_store.start_next_feishu_sync(started_at=self._now_provider())
+        if sync_task is not None:
+            return await self._process_feishu_sync(sync_task)
+        return None
 
     async def _process_started_task(self, task: MediaTask) -> MediaTask:
         try:
@@ -104,6 +127,56 @@ class MediaJobWorker:
             outcome=outcome,
         )
 
+    async def _process_feishu_sync(self, task: MediaTask) -> MediaTask:
+        try:
+            feishu_record_id = await self._feishu_sync_service.sync_task(task)
+        except Exception as exc:
+            failed_at = self._now_provider()
+            failure = classify_failure(exc)
+            should_retry = self._retry_policy.should_retry(
+                attempts=task.feishu_sync_attempts,
+                classification=failure,
+            )
+            next_attempt_at = (
+                self._retry_policy.next_attempt_at(
+                    attempts=task.feishu_sync_attempts,
+                    failed_at=failed_at,
+                )
+                if should_retry
+                else None
+            )
+            self._logger.warning(
+                "feishu_sync_failed",
+                task_id=task.id,
+                media_id=task.media.id,
+                attempt=task.feishu_sync_attempts,
+                error_kind=failure.kind,
+                retryable=failure.retryable,
+                retry_scheduled=should_retry,
+                next_attempt_at=next_attempt_at.isoformat() if next_attempt_at else None,
+                error=failure.message,
+            )
+            return await self._task_store.mark_feishu_sync_failed(
+                task.id,
+                failed_at=failed_at,
+                error=failure.message,
+                error_kind=failure.kind,
+                next_attempt_at=next_attempt_at,
+            )
+
+        self._logger.info(
+            "feishu_sync_succeeded",
+            task_id=task.id,
+            media_id=task.media.id,
+            attempt=task.feishu_sync_attempts,
+            feishu_record_id=feishu_record_id,
+        )
+        return await self._task_store.mark_feishu_sync_succeeded(
+            task.id,
+            synced_at=self._now_provider(),
+            feishu_record_id=feishu_record_id,
+        )
+
 
 async def process_media_job(media_key: str) -> dict[str, str | int | None]:
     configure_logging()
@@ -116,15 +189,21 @@ async def process_media_job(media_key: str) -> dict[str, str | int | None]:
         petkit=petkit,
         video_processor=FfmpegVideoProcessor(),
         analyzer=analyzer,
-        feishu=feishu,
         temp_store=TemporaryMediaStore(settings.temp_media_root),
+        artifact_store=PersistentArtifactStore(settings.screenshot_root),
     )
+    feishu_sync_service = FeishuSyncService(feishu=feishu)
     retry_policy = RetryPolicy(
         max_attempts=settings.worker_retry_max_attempts,
         backoff_seconds=settings.worker_retry_backoff_seconds,
         max_backoff_seconds=settings.worker_retry_max_backoff_seconds,
     )
-    worker = MediaJobWorker(task_store=task_store, pipeline=pipeline, retry_policy=retry_policy)
+    worker = MediaJobWorker(
+        task_store=task_store,
+        pipeline=pipeline,
+        feishu_sync_service=feishu_sync_service,
+        retry_policy=retry_policy,
+    )
     try:
         task = await worker.process_task(media_key)
     finally:
@@ -161,15 +240,21 @@ async def _run_cli(args: argparse.Namespace) -> int:
         petkit=petkit,
         video_processor=FfmpegVideoProcessor(),
         analyzer=analyzer,
-        feishu=feishu,
         temp_store=TemporaryMediaStore(settings.temp_media_root),
+        artifact_store=PersistentArtifactStore(settings.screenshot_root),
     )
+    feishu_sync_service = FeishuSyncService(feishu=feishu)
     retry_policy = RetryPolicy(
         max_attempts=settings.worker_retry_max_attempts,
         backoff_seconds=settings.worker_retry_backoff_seconds,
         max_backoff_seconds=settings.worker_retry_max_backoff_seconds,
     )
-    worker = MediaJobWorker(task_store=task_store, pipeline=pipeline, retry_policy=retry_policy)
+    worker = MediaJobWorker(
+        task_store=task_store,
+        pipeline=pipeline,
+        feishu_sync_service=feishu_sync_service,
+        retry_policy=retry_policy,
+    )
     logger = structlog.get_logger(__name__)
 
     try:

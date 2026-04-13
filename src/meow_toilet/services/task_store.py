@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 
-from meow_toilet.domain.entities import JobStatus, MediaTask, PetKitMedia, PipelineOutcome
+from meow_toilet.domain.entities import JobStatus, MediaTask, PetKitMedia, PipelineOutcome, SyncStatus
 
 
 class InMemoryMediaTaskStore:
@@ -57,6 +58,38 @@ class InMemoryMediaTaskStore:
                 return None
             return self._start_task(task, started_at)
 
+    async def start_feishu_sync(self, task_id: str, started_at: datetime) -> MediaTask | None:
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None or task.status != JobStatus.SUCCEEDED:
+                return None
+            if task.feishu_sync_status not in {SyncStatus.PENDING, SyncStatus.FAILED}:
+                return None
+            return self._start_feishu_sync(task, started_at)
+
+    async def start_next_feishu_sync(self, started_at: datetime) -> MediaTask | None:
+        async with self._lock:
+            syncable_tasks = sorted(
+                (
+                    task
+                    for task in self._tasks.values()
+                    if task.status == JobStatus.SUCCEEDED
+                    and task.feishu_sync_status == SyncStatus.PENDING
+                    and (
+                        task.feishu_sync_next_attempt_at is None
+                        or task.feishu_sync_next_attempt_at <= started_at
+                    )
+                ),
+                key=lambda task: (
+                    task.feishu_sync_next_attempt_at or task.updated_at,
+                    task.updated_at,
+                    task.id,
+                ),
+            )
+            if not syncable_tasks:
+                return None
+            return self._start_feishu_sync(syncable_tasks[0], started_at)
+
     def _start_task(self, task: MediaTask, started_at: datetime) -> MediaTask:
         updated = replace(
             task,
@@ -83,7 +116,12 @@ class InMemoryMediaTaskStore:
                 status=JobStatus.SUCCEEDED,
                 updated_at=completed_at,
                 finished_at=completed_at,
+                screenshot_path=outcome.screenshot.path,
                 feishu_record_id=outcome.feishu_record_id,
+                feishu_sync_status=SyncStatus.PENDING,
+                feishu_sync_next_attempt_at=completed_at,
+                feishu_sync_last_error=None,
+                feishu_sync_last_error_kind=None,
                 event_time=outcome.analysis.event_time,
                 elimination_type=outcome.analysis.elimination_type,
                 stool_score=outcome.analysis.stool_score,
@@ -96,6 +134,19 @@ class InMemoryMediaTaskStore:
             )
             self._tasks[task_id] = updated
             return updated
+
+    def _start_feishu_sync(self, task: MediaTask, started_at: datetime) -> MediaTask:
+        updated = replace(
+            task,
+            updated_at=started_at,
+            feishu_sync_status=SyncStatus.RUNNING,
+            feishu_sync_attempts=task.feishu_sync_attempts + 1,
+            feishu_sync_last_error=None,
+            feishu_sync_last_error_kind=None,
+            feishu_sync_next_attempt_at=None,
+        )
+        self._tasks[task.id] = updated
+        return updated
 
     async def mark_failed(
         self,
@@ -116,6 +167,52 @@ class InMemoryMediaTaskStore:
                 last_error=error,
                 last_error_kind=error_kind,
                 next_attempt_at=next_attempt_at,
+            )
+            self._tasks[task_id] = updated
+            return updated
+
+    async def mark_feishu_sync_succeeded(
+        self,
+        task_id: str,
+        synced_at: datetime,
+        *,
+        feishu_record_id: str | None,
+    ) -> MediaTask:
+        async with self._lock:
+            task = self._tasks[task_id]
+            updated = replace(
+                task,
+                updated_at=synced_at,
+                feishu_record_id=feishu_record_id or task.feishu_record_id,
+                feishu_sync_status=SyncStatus.SUCCEEDED,
+                feishu_sync_last_error=None,
+                feishu_sync_last_error_kind=None,
+                feishu_sync_next_attempt_at=None,
+                feishu_synced_at=synced_at,
+            )
+            self._tasks[task_id] = updated
+            return updated
+
+    async def mark_feishu_sync_failed(
+        self,
+        task_id: str,
+        failed_at: datetime,
+        error: str,
+        *,
+        error_kind: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> MediaTask:
+        async with self._lock:
+            task = self._tasks[task_id]
+            updated = replace(
+                task,
+                updated_at=failed_at,
+                feishu_sync_status=(
+                    SyncStatus.PENDING if next_attempt_at is not None else SyncStatus.FAILED
+                ),
+                feishu_sync_last_error=error,
+                feishu_sync_last_error_kind=error_kind,
+                feishu_sync_next_attempt_at=next_attempt_at,
             )
             self._tasks[task_id] = updated
             return updated
