@@ -3,12 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 from html import escape
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
-import httpx
-
-from meow_toilet.adapters.petkit import PetKitApiAdapter
 from meow_toilet.config import Settings, get_settings
 from meow_toilet.domain.entities import (
     DashboardSnapshot,
@@ -65,90 +59,31 @@ class DashboardSnapshotService:
 
 
 class DashboardMediaService:
-    """为看板补充运行时媒体能力，例如刷新会过期的 PetKit 封面图地址。"""
+    """为看板提供数据库驱动的本地预览图读取能力。"""
 
     def __init__(
         self,
         *,
         task_store: MediaTaskStore,
         settings_provider: Callable[[], Settings] = get_settings,
-        client: httpx.AsyncClient | None = None,
     ) -> None:
         self._task_store = task_store
         self._settings_provider = settings_provider
-        self._client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-        self._owns_client = client is None
 
     async def aclose(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
-
-    async def resolve_cover_url(self, task_id: str) -> str | None:
-        task = await self._task_store.get_task(task_id)
-        if task is None:
-            return None
-        if not task.media.cover_url:
-            return None
-
-        settings = self._settings_provider()
-        if not settings.petkit_credentials_configured:
-            return task.media.cover_url
-
-        petkit = PetKitApiAdapter.from_settings(settings)
-        try:
-            return await petkit.get_fresh_cover_url(task.media)
-        finally:
-            await petkit.aclose()
+        return None
 
     async def load_cover_asset(self, task_id: str) -> tuple[bytes, str] | None:
         task = await self._task_store.get_task(task_id)
         if task is None:
             return None
-
-        settings = self._settings_provider()
-        if settings.petkit_credentials_configured:
-            petkit_asset = await self._load_cover_asset_via_petkit(task_id=task.id)
-            if petkit_asset is not None:
-                return petkit_asset
-
-        cover_url = await self.resolve_cover_url(task_id)
-        if not cover_url:
+        if task.preview_path is None or not task.preview_path.exists():
             return self._build_placeholder(task_id=task.id, device_id=task.media.device_id)
 
-        try:
-            response = await self._client.get(cover_url)
-            response.raise_for_status()
-        except httpx.HTTPError:
-            return self._build_placeholder(task_id=task.id, device_id=task.media.device_id)
-
-        media_type = self._detect_image_media_type(
-            content=response.content,
-            response_media_type=response.headers.get("content-type"),
-        )
-        if media_type is None:
-            return self._build_placeholder(task_id=task.id, device_id=task.media.device_id)
-        return response.content, media_type
-
-    async def _load_cover_asset_via_petkit(self, task_id: str) -> tuple[bytes, str] | None:
-        task = await self._task_store.get_task(task_id)
-        if task is None:
-            return None
-
-        petkit = PetKitApiAdapter.from_settings(self._settings_provider())
-        try:
-            with TemporaryDirectory() as temp_root:
-                output_path = Path(temp_root) / "cover.jpg"
-                try:
-                    decrypted_path = await petkit.download_cover_image(task.media, output_path)
-                except (KeyError, ValueError, FileNotFoundError):
-                    return None
-                content = decrypted_path.read_bytes()
-        finally:
-            await petkit.aclose()
-
+        content = task.preview_path.read_bytes()
         media_type = self._detect_image_media_type(content=content, response_media_type=None)
         if media_type is None:
-            return None
+            return self._build_placeholder(task_id=task.id, device_id=task.media.device_id)
         return content, media_type
 
     @staticmethod

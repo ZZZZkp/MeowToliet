@@ -190,7 +190,7 @@ async def process_media_job(media_key: str) -> dict[str, str | int | None]:
         video_processor=FfmpegVideoProcessor(),
         analyzer=analyzer,
         temp_store=TemporaryMediaStore(settings.temp_media_root),
-        artifact_store=PersistentArtifactStore(settings.screenshot_root),
+        artifact_store=PersistentArtifactStore(settings.screenshot_root, settings.preview_root),
     )
     feishu_sync_service = FeishuSyncService(feishu=feishu)
     retry_policy = RetryPolicy(
@@ -241,7 +241,7 @@ async def _run_cli(args: argparse.Namespace) -> int:
         video_processor=FfmpegVideoProcessor(),
         analyzer=analyzer,
         temp_store=TemporaryMediaStore(settings.temp_media_root),
-        artifact_store=PersistentArtifactStore(settings.screenshot_root),
+        artifact_store=PersistentArtifactStore(settings.screenshot_root, settings.preview_root),
     )
     feishu_sync_service = FeishuSyncService(feishu=feishu)
     retry_policy = RetryPolicy(

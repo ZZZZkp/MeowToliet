@@ -17,11 +17,19 @@ class InMemoryMediaTaskStore:
         self,
         media: PetKitMedia,
         discovered_at: datetime,
+        *,
+        preview_path: Path | None = None,
     ) -> tuple[MediaTask, bool]:
         async with self._lock:
             existing = self._tasks.get(media.dedupe_key)
             if existing is not None:
-                return existing, False
+                updated = replace(
+                    existing,
+                    media=media,
+                    preview_path=preview_path or existing.preview_path,
+                )
+                self._tasks[existing.id] = updated
+                return updated, False
 
             task = MediaTask(
                 id=media.dedupe_key,
@@ -30,6 +38,7 @@ class InMemoryMediaTaskStore:
                 discovered_at=discovered_at,
                 updated_at=discovered_at,
                 next_attempt_at=discovered_at,
+                preview_path=preview_path,
             )
             self._tasks[task.id] = task
             return task, True
@@ -116,6 +125,7 @@ class InMemoryMediaTaskStore:
                 status=JobStatus.SUCCEEDED,
                 updated_at=completed_at,
                 finished_at=completed_at,
+                preview_path=task.preview_path,
                 screenshot_path=outcome.screenshot.path,
                 feishu_record_id=outcome.feishu_record_id,
                 feishu_sync_status=SyncStatus.PENDING,

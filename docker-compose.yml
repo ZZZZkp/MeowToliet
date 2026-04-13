@@ -47,6 +47,7 @@ services:
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
       SCREENSHOT_ROOT: ./tmp/screenshots
+      PREVIEW_ROOT: ./tmp/previews
       PETKIT_EMAIL: ${PETKIT_EMAIL:-}
       PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
       PETKIT_REGION: ${PETKIT_REGION:-cn}
@@ -101,6 +102,7 @@ services:
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
       SCREENSHOT_ROOT: ./tmp/screenshots
+      PREVIEW_ROOT: ./tmp/previews
       PETKIT_EMAIL: ${PETKIT_EMAIL:-}
       PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
       PETKIT_REGION: ${PETKIT_REGION:-cn}
@@ -157,6 +159,7 @@ services:
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
       SCREENSHOT_ROOT: ./tmp/screenshots
+      PREVIEW_ROOT: ./tmp/previews
       PETKIT_EMAIL: ${PETKIT_EMAIL:-}
       PETKIT_PASSWORD: ${PETKIT_PASSWORD:-}
       PETKIT_REGION: ${PETKIT_REGION:-cn}
@@ -211,6 +214,7 @@ services:
       ARQ_QUEUE_NAME: meow_toilet:media
       TEMP_MEDIA_ROOT: ./tmp/media
       SCREENSHOT_ROOT: ./tmp/screenshots
+      PREVIEW_ROOT: ./tmp/previews
     volumes:
       - .:/app
     command: ["sh", "-lc", "PYTHONPATH=src pytest -q"]

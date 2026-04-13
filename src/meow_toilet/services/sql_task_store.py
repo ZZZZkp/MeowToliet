@@ -30,6 +30,7 @@ class MediaTaskRecord(Base):
     encrypted_download_url = Column(Text(), nullable=True)
     source_day = Column(String(32), nullable=False, index=True)
     pet_name = Column(String(255), nullable=True)
+    preview_path = Column(Text(), nullable=True)
     status = Column(String(32), nullable=False, index=True)
     discovered_at = Column(DateTime(timezone=True), nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, index=True)
@@ -66,6 +67,8 @@ class SqlAlchemyMediaTaskStore:
         self,
         media: PetKitMedia,
         discovered_at: datetime,
+        *,
+        preview_path: Path | None = None,
     ) -> tuple[MediaTask, bool]:
         try:
             with self._session_factory.begin() as session:
@@ -78,6 +81,7 @@ class SqlAlchemyMediaTaskStore:
                     encrypted_download_url=media.encrypted_download_url,
                     source_day=media.source_day,
                     pet_name=media.pet_name,
+                    preview_path=None if preview_path is None else str(preview_path),
                     status=JobStatus.QUEUED.value,
                     discovered_at=discovered_at,
                     updated_at=discovered_at,
@@ -92,7 +96,7 @@ class SqlAlchemyMediaTaskStore:
                 record = session.get(MediaTaskRecord, media.dedupe_key)
                 if record is None:
                     raise
-                self._refresh_media_fields(record, media)
+                self._refresh_media_fields(record, media, preview_path=preview_path)
                 session.flush()
                 return self._to_task(record), False
 
@@ -288,6 +292,8 @@ class SqlAlchemyMediaTaskStore:
             existing_columns = {column["name"] for column in schema.get_columns("media_tasks")}
             if "pet_name" not in existing_columns:
                 connection.execute(text("ALTER TABLE media_tasks ADD COLUMN pet_name VARCHAR(255)"))
+            if "preview_path" not in existing_columns:
+                connection.execute(text("ALTER TABLE media_tasks ADD COLUMN preview_path TEXT"))
             if "last_error_kind" not in existing_columns:
                 connection.execute(
                     text("ALTER TABLE media_tasks ADD COLUMN last_error_kind VARCHAR(64)"),
@@ -372,7 +378,12 @@ class SqlAlchemyMediaTaskStore:
         return self._to_task(record)
 
     @staticmethod
-    def _refresh_media_fields(record: MediaTaskRecord, media: PetKitMedia) -> None:
+    def _refresh_media_fields(
+        record: MediaTaskRecord,
+        media: PetKitMedia,
+        *,
+        preview_path: Path | None = None,
+    ) -> None:
         record.media_id = media.id
         record.device_id = media.device_id
         record.media_started_at = media.started_at
@@ -380,6 +391,8 @@ class SqlAlchemyMediaTaskStore:
         record.encrypted_download_url = media.encrypted_download_url
         record.source_day = media.source_day
         record.pet_name = media.pet_name
+        if preview_path is not None:
+            record.preview_path = str(preview_path)
 
     @staticmethod
     def _to_task(record: MediaTaskRecord) -> MediaTask:
@@ -414,6 +427,7 @@ class SqlAlchemyMediaTaskStore:
             last_error_kind=record.last_error_kind,
             next_attempt_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.next_attempt_at),
             finished_at=SqlAlchemyMediaTaskStore._coerce_datetime(record.finished_at),
+            preview_path=None if record.preview_path is None else Path(record.preview_path),
             screenshot_path=None if record.screenshot_path is None else Path(record.screenshot_path),
             feishu_record_id=record.feishu_record_id,
             feishu_sync_status=feishu_sync_status,

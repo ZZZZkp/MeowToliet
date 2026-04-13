@@ -331,7 +331,7 @@
       <section class="task-grid">
         {% for task in snapshot.recent_tasks %}
         <article class="card task-card">
-          {% if task.media.cover_url %}
+          {% if task.preview_path or task.media.cover_url %}
           <img
             class="cover"
             src="/api/media/cover/{{ task.id }}?ts={{ snapshot.generated_at.timestamp()|int }}"

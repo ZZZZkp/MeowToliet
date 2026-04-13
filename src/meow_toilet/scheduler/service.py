@@ -6,12 +6,15 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from meow_toilet.adapters.petkit import PetKitApiAdapter
 from meow_toilet.config import get_settings
 from meow_toilet.domain.entities import SchedulerPollResult
 from meow_toilet.observability import configure_logging
 from meow_toilet.runtime import create_job_dispatcher
+from meow_toilet.services.artifacts import PersistentArtifactStore
 from meow_toilet.services.interfaces import JobDispatcher, MediaTaskStore, PetKitGateway
 from meow_toilet.services.sql_task_store import SqlAlchemyMediaTaskStore
 import structlog
@@ -41,15 +44,18 @@ class PetKitPollingScheduler:
         *,
         petkit: PetKitGateway,
         task_store: MediaTaskStore,
+        artifact_store: PersistentArtifactStore | None = None,
         dispatcher: JobDispatcher | None = None,
         now_provider: Callable[[], datetime] = _utc_now,
         device_ids: list[str] | None = None,
     ) -> None:
         self._petkit = petkit
         self._task_store = task_store
+        self._artifact_store = artifact_store
         self._dispatcher = dispatcher
         self._now_provider = now_provider
         self._device_ids = set(device_ids or [])
+        self._logger = structlog.get_logger(__name__)
 
     async def poll(self, *, source_day: str | None = None) -> SchedulerPollResult:
         requested_day = source_day or self._now_provider().date().isoformat()
@@ -67,9 +73,11 @@ class PetKitPollingScheduler:
             media_items = await self._petkit.list_media(device, requested_day)
             discovered_media_count += len(media_items)
             for media in media_items:
+                preview_path = await self._ensure_persisted_preview(media)
                 _task, created = await self._task_store.enqueue_media(
                     media,
                     discovered_at=self._now_provider(),
+                    preview_path=preview_path,
                 )
                 if created:
                     enqueued_task_count += 1
@@ -88,6 +96,31 @@ class PetKitPollingScheduler:
             dispatched_task_count=dispatched_task_count,
         )
 
+    async def _ensure_persisted_preview(self, media) -> Path | None:
+        existing_task = await self._task_store.get_task(media.dedupe_key)
+        if existing_task is not None and existing_task.preview_path and existing_task.preview_path.exists():
+            return existing_task.preview_path
+        if self._artifact_store is None or not media.cover_url:
+            return None
+
+        try:
+            with TemporaryDirectory() as temp_root:
+                temp_path = Path(temp_root) / "preview.jpg"
+                downloaded_path = await self._petkit.download_cover_image(media, temp_path)
+                return await self._artifact_store.persist_preview(
+                    task_id=media.dedupe_key,
+                    source_path=downloaded_path,
+                )
+        except Exception as exc:
+            self._logger.warning(
+                "preview_persist_failed",
+                task_id=media.dedupe_key,
+                media_id=media.id,
+                device_id=media.device_id,
+                error=str(exc),
+            )
+            return None
+
 
 async def _run_cli(args: argparse.Namespace) -> int:
     configure_logging()
@@ -99,6 +132,7 @@ async def _run_cli(args: argparse.Namespace) -> int:
     scheduler = PetKitPollingScheduler(
         petkit=petkit,
         task_store=task_store,
+        artifact_store=PersistentArtifactStore(settings.screenshot_root, settings.preview_root),
         dispatcher=dispatcher,
         device_ids=settings.petkit_device_id_list,
     )

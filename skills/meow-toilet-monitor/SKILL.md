@@ -34,6 +34,7 @@ Use this skill when working inside the MeowToliet repository.
 5. Add or update tests before wiring external services whenever a behavior can be isolated.
 6. Favor small retries, idempotent writes, and dedupe keys based on PetKit media identity.
 7. Preserve the low-frequency home-use bias: manual controls and light operational flow beat overbuilt automation.
+8. After any code, config, migration, or template change that affects runtime behavior, rebuild the Docker services before considering the change live. Use `docker compose up -d --build web scheduler worker` unless the task clearly only affects the test image.
 
 ## Data expectations
 
@@ -53,9 +54,10 @@ Use this skill when working inside the MeowToliet repository.
 - The Feishu adapter now resolves configured field names through alias fallback, including Chinese field names.
 - The current live Bitable includes `猫` and `排泄类型` as single-select columns, so writes must match real option names instead of sending raw backend enums.
 - `时间` is currently handled as a text value, not a dedicated Feishu date field.
-- Dashboard cover delivery should prefer decrypting PetKit previews server-side and only fall back to placeholders when decryption or fetch fails.
+- Dashboard cover delivery now reads persisted local preview files from task state. Scheduler is responsible for downloading and persisting previews during polling, and the dashboard should only fall back to placeholders when the local preview file is missing or invalid.
 - The fastest way to inspect live Feishu columns and single-select options is `python3 -m meow_toilet.phase0_feishu_fields`.
 - The fastest way to verify the whole current chain is `phase0_petkit -> phase0_media -> phase0_gemini -> phase0_feishu`.
+- The runtime containers do not live-reload repository code from the host. Rebuild containers after repository changes if you want the running dashboard, scheduler, or worker to use the new code.
 
 ## References
 

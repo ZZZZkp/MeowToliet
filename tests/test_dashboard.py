@@ -4,8 +4,6 @@ import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
-
 from meow_toilet.config import Settings
 from meow_toilet.domain.entities import (
     AnalysisResult,
@@ -123,7 +121,7 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
     asyncio.run(run_assertions())
 
 
-def test_dashboard_media_service_prefers_fresh_petkit_cover_url(monkeypatch) -> None:
+def test_dashboard_media_service_reads_persisted_preview_from_database(tmp_path: Path) -> None:
     sample_media = PetKitMedia(
         id="media-dashboard-2",
         device_id="device-2",
@@ -133,29 +131,14 @@ def test_dashboard_media_service_prefers_fresh_petkit_cover_url(monkeypatch) -> 
         source_day="2026-04-09",
     )
     task_store = InMemoryMediaTaskStore()
-
-    class FakePetKitAdapter:
-        @classmethod
-        def from_settings(cls, settings: Settings) -> FakePetKitAdapter:
-            assert settings.petkit_credentials_configured is True
-            return cls()
-
-        async def get_fresh_cover_url(self, media: PetKitMedia) -> str | None:
-            assert media.id == "media-dashboard-2"
-            return "https://example.com/fresh-cover.jpg"
-
-        async def aclose(self) -> None:
-            return None
-
-    monkeypatch.setattr(
-        "meow_toilet.services.dashboard.PetKitApiAdapter",
-        FakePetKitAdapter,
-    )
+    preview_path = tmp_path / "preview.jpg"
+    preview_path.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
 
     async def run_test() -> None:
         await task_store.enqueue_media(
             sample_media,
             discovered_at=datetime(2026, 4, 9, 9, 59, tzinfo=UTC),
+            preview_path=preview_path,
         )
         service = DashboardMediaService(
             task_store=task_store,
@@ -164,15 +147,16 @@ def test_dashboard_media_service_prefers_fresh_petkit_cover_url(monkeypatch) -> 
                 petkit_password="secret",
             ),
         )
-        cover_url = await service.resolve_cover_url("device-2:media-dashboard-2")
-        assert cover_url == "https://example.com/fresh-cover.jpg"
+        asset = await service.load_cover_asset("device-2:media-dashboard-2")
+        assert asset is not None
+        content, media_type = asset
+        assert content == b"\xff\xd8\xff\xe0fake-jpeg"
+        assert media_type == "image/jpeg"
 
     asyncio.run(run_test())
 
 
-def test_dashboard_media_service_returns_placeholder_when_cover_payload_is_not_an_image(
-    monkeypatch,
-) -> None:
+def test_dashboard_media_service_returns_placeholder_when_preview_is_missing() -> None:
     sample_media = PetKitMedia(
         id="media-dashboard-3",
         device_id="device-3",
@@ -183,39 +167,10 @@ def test_dashboard_media_service_returns_placeholder_when_cover_payload_is_not_a
     )
     task_store = InMemoryMediaTaskStore()
 
-    class FakePetKitAdapter:
-        @classmethod
-        def from_settings(cls, settings: Settings) -> FakePetKitAdapter:
-            assert settings.petkit_credentials_configured is True
-            return cls()
-
-        async def download_cover_image(self, media: PetKitMedia, destination: Path) -> Path:
-            del media, destination
-            raise ValueError("preview still needs fallback")
-
-        async def get_fresh_cover_url(self, media: PetKitMedia) -> str | None:
-            assert media.id == "media-dashboard-3"
-            return "https://example.com/not-an-image.bin"
-
-        async def aclose(self) -> None:
-            return None
-
-    monkeypatch.setattr(
-        "meow_toilet.services.dashboard.PetKitApiAdapter",
-        FakePetKitAdapter,
-    )
-
     async def run_test() -> None:
         await task_store.enqueue_media(
             sample_media,
             discovered_at=datetime(2026, 4, 9, 10, 59, tzinfo=UTC),
-        )
-        transport = httpx.MockTransport(
-            lambda request: httpx.Response(
-                200,
-                content=b"\xd1 \xe1A/I\xb8\xf4",
-                headers={"content-type": "application/x-www-form-urlencoded"},
-            ),
         )
         service = DashboardMediaService(
             task_store=task_store,
@@ -223,12 +178,8 @@ def test_dashboard_media_service_returns_placeholder_when_cover_payload_is_not_a
                 petkit_email="user@example.com",
                 petkit_password="secret",
             ),
-            client=httpx.AsyncClient(transport=transport, timeout=10.0),
         )
-        try:
-            asset = await service.load_cover_asset("device-3:media-dashboard-3")
-        finally:
-            await service.aclose()
+        asset = await service.load_cover_asset("device-3:media-dashboard-3")
 
         assert asset is not None
         content, media_type = asset
@@ -238,7 +189,9 @@ def test_dashboard_media_service_returns_placeholder_when_cover_payload_is_not_a
     asyncio.run(run_test())
 
 
-def test_dashboard_media_service_prefers_decrypted_petkit_cover_asset(monkeypatch) -> None:
+def test_dashboard_media_service_returns_placeholder_when_persisted_preview_is_invalid(
+    tmp_path: Path,
+) -> None:
     sample_media = PetKitMedia(
         id="media-dashboard-4",
         device_id="device-4",
@@ -248,31 +201,14 @@ def test_dashboard_media_service_prefers_decrypted_petkit_cover_asset(monkeypatc
         source_day="2026-04-09",
     )
     task_store = InMemoryMediaTaskStore()
-    jpeg_bytes = b"\xff\xd8\xff\xe0fake-jpeg"
-
-    class FakePetKitAdapter:
-        @classmethod
-        def from_settings(cls, settings: Settings) -> FakePetKitAdapter:
-            assert settings.petkit_credentials_configured is True
-            return cls()
-
-        async def download_cover_image(self, media: PetKitMedia, destination: Path) -> Path:
-            assert media.id == "media-dashboard-4"
-            destination.write_bytes(jpeg_bytes)
-            return destination
-
-        async def aclose(self) -> None:
-            return None
-
-    monkeypatch.setattr(
-        "meow_toilet.services.dashboard.PetKitApiAdapter",
-        FakePetKitAdapter,
-    )
+    preview_path = tmp_path / "preview.bin"
+    preview_path.write_bytes(b"not-an-image")
 
     async def run_test() -> None:
         await task_store.enqueue_media(
             sample_media,
             discovered_at=datetime(2026, 4, 9, 11, 59, tzinfo=UTC),
+            preview_path=preview_path,
         )
         service = DashboardMediaService(
             task_store=task_store,
@@ -285,7 +221,7 @@ def test_dashboard_media_service_prefers_decrypted_petkit_cover_asset(monkeypatc
 
         assert asset is not None
         content, media_type = asset
-        assert content == jpeg_bytes
-        assert media_type == "image/jpeg"
+        assert media_type == "image/svg+xml"
+        assert "PetKit 预览暂不可用".encode() in content
 
     asyncio.run(run_test())

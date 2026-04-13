@@ -15,10 +15,11 @@ Dockerized dashboard:
 - Scheduler and worker can now run as long-lived Docker services.
 - Worker failures can now auto-retry with exponential backoff before becoming terminal failures.
 - Analysis now persists screenshots to local storage before Feishu sync, so Feishu retries do not need to re-run Gemini.
+- PetKit preview images are now persisted locally during polling, and the dashboard reads them back from the task database instead of fetching them on demand.
 - Gemini and Feishu request failures now emit more detailed structured logs for timeout, rate limit, and response-format issues.
 - Dashboard and `/api/dashboard` now read from a shared task snapshot flow.
 - Manual poll, process-next, and per-task retry actions are wired through the dashboard.
-- PetKit preview images are handled as encrypted assets and decrypted server-side before being served.
+- PetKit preview images are decrypted during polling, persisted locally, and then served back from the task database state.
 - Docker `web` can start with PostgreSQL, Redis, Alembic migration, and the live dashboard on port `8000`.
 - The repository has been initialized, committed, and pushed to GitHub.
 
@@ -37,7 +38,7 @@ Dockerized dashboard:
 - `src/meow_toilet/adapters/video.py`: `ffmpeg` and `ffprobe` based media processing.
 - `src/meow_toilet/adapters/gemini.py`: Gemini Files API upload, Chinese prompt control, and tolerant structured output parsing.
 - `src/meow_toilet/adapters/feishu.py`: Feishu tenant token, image upload, field discovery, and type-aware Bitable record creation.
-- `src/meow_toilet/services/dashboard.py`: dashboard snapshot building and runtime cover-image delivery.
+- `src/meow_toilet/services/dashboard.py`: dashboard snapshot building and database-backed cover-image delivery.
 - `src/meow_toilet/services/sql_task_store.py`: persistent task storage backed by PostgreSQL or SQLite fallback.
 - `src/meow_toilet/services/operations.py`: manual poll and retry actions exposed by the dashboard.
 - `src/meow_toilet/app/main.py` and `src/meow_toilet/app/templates/dashboard.html`: FastAPI routes and the lightweight board UI.
@@ -76,7 +77,8 @@ docker compose logs -f scheduler worker
 ```
 
 Screenshots extracted from analyzed events are now persisted under `./tmp/screenshots` and reused by
-the background Feishu sync stage.
+the background Feishu sync stage. PetKit previews are persisted under `./tmp/previews` during
+polling so the dashboard can serve them directly from local storage.
 
 ### Docker test mode
 
@@ -98,7 +100,8 @@ The current dashboard is intentionally optimized for a low-frequency home setup:
 
 - PostgreSQL and Redis are kept for persistent state and dispatch compatibility.
 - The UI still supports lightweight manual operation even though scheduler and worker now run in the background.
-- Cover images are served on demand and videos are still temporary processing artifacts.
+- Cover images are now cached locally and served from the database-backed task records, while videos
+  are still temporary processing artifacts.
 
 ## Verified probe commands
 

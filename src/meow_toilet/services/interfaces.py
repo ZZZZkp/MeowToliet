@@ -23,6 +23,8 @@ class PetKitGateway(Protocol):
 
     async def download_media(self, media: PetKitMedia, destination: Path) -> Path: ...
 
+    async def download_cover_image(self, media: PetKitMedia, destination: Path) -> Path: ...
+
 
 class VideoProcessor(Protocol):
     async def decode(self, encrypted_video: Path) -> Path: ...
@@ -59,6 +61,8 @@ class MediaTaskStore(Protocol):
         self,
         media: PetKitMedia,
         discovered_at: datetime,
+        *,
+        preview_path: Path | None = None,
     ) -> tuple[MediaTask, bool]: ...
 
     async def start_task(self, task_id: str, started_at: datetime) -> MediaTask | None: ...

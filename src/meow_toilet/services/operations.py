@@ -36,6 +36,7 @@ class ManualOperationsService:
         scheduler = PetKitPollingScheduler(
             petkit=petkit,
             task_store=self._task_store,
+            artifact_store=PersistentArtifactStore(settings.screenshot_root, settings.preview_root),
             dispatcher=self._dispatcher,
             device_ids=settings.petkit_device_id_list,
         )
@@ -70,7 +71,7 @@ class ManualOperationsService:
             video_processor=FfmpegVideoProcessor(),
             analyzer=analyzer,
             temp_store=TemporaryMediaStore(settings.temp_media_root),
-            artifact_store=PersistentArtifactStore(settings.screenshot_root),
+            artifact_store=PersistentArtifactStore(settings.screenshot_root, settings.preview_root),
         )
         feishu_sync_service = FeishuSyncService(feishu=feishu)
         retry_policy = RetryPolicy(

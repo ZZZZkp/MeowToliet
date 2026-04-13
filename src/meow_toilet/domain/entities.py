@@ -93,6 +93,7 @@ class MediaTask:
     last_error_kind: str | None = None
     next_attempt_at: datetime | None = None
     finished_at: datetime | None = None
+    preview_path: Path | None = None
     screenshot_path: Path | None = None
     feishu_record_id: str | None = None
     feishu_sync_status: SyncStatus | None = None

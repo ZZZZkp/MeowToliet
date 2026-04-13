@@ -81,11 +81,46 @@ def test_sql_task_store_persists_and_updates_task_lifecycle(tmp_path: Path) -> N
         assert completed_task.raw_summary == "Poop event detected."
         assert fetched is not None
         assert fetched.status == JobStatus.SUCCEEDED
+        assert fetched.preview_path is None
         assert fetched.screenshot_path is not None
         assert fetched.media.pet_name == "翠饼"
         assert fetched.event_time is not None
         assert fetched.event_time.tzinfo is not None
         assert len(listed) == 1
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        store.dispose()
+
+
+def test_sql_task_store_persists_preview_path_from_enqueue(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'tasks-preview.db'}"
+    store = SqlAlchemyMediaTaskStore(database_url)
+    media = PetKitMedia(
+        id="media-preview-1",
+        device_id="device-preview-1",
+        started_at=datetime(2026, 4, 9, 9, 0, tzinfo=UTC),
+        cover_url="https://example.com/cover.jpg",
+        encrypted_download_url="https://example.com/video.mp4",
+        source_day="2026-04-09",
+        pet_name="翠饼",
+    )
+    preview_path = tmp_path / "preview.jpg"
+    preview_path.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
+
+    async def run_test() -> None:
+        created_task, created = await store.enqueue_media(
+            media,
+            discovered_at=datetime(2026, 4, 9, 9, 1, tzinfo=UTC),
+            preview_path=preview_path,
+        )
+        fetched = await store.get_task(created_task.id)
+
+        assert created is True
+        assert fetched is not None
+        assert fetched.preview_path == preview_path
+        assert fetched.media.cover_url == "https://example.com/cover.jpg"
 
     try:
         asyncio.run(run_test())
