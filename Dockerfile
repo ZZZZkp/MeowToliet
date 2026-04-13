@@ -22,4 +22,4 @@ RUN pip install --no-cache-dir -e .
 
 EXPOSE 8000
 
-CMD ["sh", "-lc", "PYTHONPATH=src python -m alembic upgrade head && PYTHONPATH=src python -m uvicorn meow_toilet.app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-lc", "PYTHONPATH=src python -m alembic upgrade head && PYTHONPATH=src python -m uvicorn meow_toilet.app.main:app --host \"${APP_HOST:-0.0.0.0}\" --port \"${APP_PORT:-8000}\""]
