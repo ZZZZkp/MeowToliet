@@ -66,6 +66,22 @@ docker compose up --build -d
 open http://127.0.0.1:8000/
 ```
 
+### Docker test mode
+
+```bash
+docker compose run --rm test
+```
+
+or:
+
+```bash
+make docker-test
+```
+
+The `test` service uses a dedicated Docker build target with `.[dev]` installed, starts against the
+same Compose PostgreSQL and Redis services, and bind-mounts the repository so local code changes are
+picked up immediately without rebuilding the runtime `web` container.
+
 The current dashboard is intentionally optimized for a low-frequency home setup:
 
 - PostgreSQL and Redis are kept for persistent state and dispatch compatibility.

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -18,8 +18,16 @@ COPY src /app/src
 COPY alembic.ini /app/
 COPY alembic /app/alembic
 
+FROM base AS runtime
+
 RUN pip install --no-cache-dir -e .
 
 EXPOSE 8000
 
 CMD ["sh", "-lc", "PYTHONPATH=src python -m alembic upgrade head && PYTHONPATH=src python -m uvicorn meow_toilet.app.main:app --host \"${APP_HOST:-0.0.0.0}\" --port \"${APP_PORT:-8000}\""]
+
+FROM base AS test
+
+RUN pip install --no-cache-dir -e ".[dev]"
+
+CMD ["sh", "-lc", "PYTHONPATH=src pytest -q"]

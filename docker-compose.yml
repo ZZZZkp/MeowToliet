@@ -28,6 +28,7 @@ services:
   web:
     build:
       context: .
+      target: runtime
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,6 +72,29 @@ services:
       - "8000:8000"
     volumes:
       - ./tmp:/app/tmp
+
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: test
+      APP_DEBUG: "true"
+      APP_TIMEZONE: Asia/Shanghai
+      DATABASE_URL: postgresql+psycopg://meow:meow@postgres:5432/meow_toilet
+      DATABASE_FALLBACK_URL: sqlite:///./tmp/meow_toilet.db
+      REDIS_URL: redis://redis:6379/0
+      ARQ_QUEUE_NAME: meow_toilet:media
+      TEMP_MEDIA_ROOT: ./tmp/media
+    volumes:
+      - .:/app
+    command: ["sh", "-lc", "PYTHONPATH=src pytest -q"]
 
 volumes:
   postgres_data:

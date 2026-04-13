@@ -1,9 +1,12 @@
 PYTHON ?= python3
 
-.PHONY: test lint run worker scheduler migrate
+.PHONY: test docker-test lint run worker scheduler migrate
 
 test:
 	PYTHONPATH=src $(PYTHON) -m pytest
+
+docker-test:
+	docker compose run --rm test
 
 lint:
 	$(PYTHON) -m ruff check src tests
