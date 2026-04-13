@@ -156,7 +156,7 @@ Ambiguous Gemini results now map directly to the `看不清` single-select optio
 - Gemini probe succeeded and returned Chinese structured analysis for media `105874_1775664690`.
 - Dockerized `phase0_feishu` succeeded for `2026-04-10`, created record `recvgnGuboHj1b`, and wrote:
   - `eventId=105874_1775763951`
-  - `时间=2026-04-10T03:46:24.500000+08:00`
+  - `时间=2026-04-10 03:45:51`
   - `猫=翠饼`
   - `排泄类型=小便`
 - Docker dashboard can render recent queue items and return decrypted PetKit preview JPEGs such as

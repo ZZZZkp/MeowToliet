@@ -80,7 +80,7 @@ async def _run(args: argparse.Namespace) -> int:
                     "record_id": record_id,
                     "media_id": target_media.id,
                     "source_day": args.source_day,
-                    "event_time": analysis.event_time.isoformat(),
+                    "event_time": FeishuBitableSink._format_event_time(target_media.started_at),
                     "elimination_type": analysis.elimination_type.value,
                     "stool_score": analysis.stool_score,
                     "stool_shape_note": analysis.stool_shape_note,

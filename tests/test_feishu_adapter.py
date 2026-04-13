@@ -132,6 +132,7 @@ def test_feishu_sink_uploads_screenshot_and_creates_record(tmp_path: Path) -> No
             payload = request.read().decode("utf-8")
             assert "media-1" in payload
             assert "img-token" in payload
+            assert '"Event Time":"2026-04-09 08:11:30"' in payload
             assert '"Pet Name":"翠饼"' in payload
             assert '"Elimination Type":"大便"' in payload
             assert "翠饼" in payload
@@ -694,6 +695,7 @@ def test_feishu_sink_falls_back_to_existing_chinese_field_names(tmp_path: Path) 
             assert "大便描述" in payload
             assert "大便照片" in payload
             assert "Elimination Type" not in payload
+            assert '"时间":"2026-04-09 08:11:30"' in payload
             assert "大便" in payload
             assert "翠饼" in payload
             return httpx.Response(
@@ -851,6 +853,7 @@ def test_feishu_sink_maps_unknown_elimination_type_to_unclear_single_select(
         ):
             payload = request.read().decode("utf-8")
             record_payloads.append(payload)
+            assert '"时间":"2026-04-09 08:11:30"' in payload
             assert '"排泄类型":"看不清"' in payload
             assert '"大便描述":"看不清"' in payload
             return httpx.Response(

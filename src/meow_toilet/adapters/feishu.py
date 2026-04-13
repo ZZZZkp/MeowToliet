@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 import re
 import time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 import structlog
@@ -35,6 +37,9 @@ SINGLE_SELECT_VALUE_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
         "unknown": ("看不清", "未知", "unknown"),
     },
 }
+
+FEISHU_EVENT_TIMEZONE = ZoneInfo("Asia/Shanghai")
+FEISHU_EVENT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 @dataclass(frozen=True, slots=True)
@@ -579,7 +584,7 @@ class FeishuBitableSink:
         self._set_field(
             fields,
             mapping.get("event_time"),
-            analysis.event_time.isoformat(),
+            self._format_event_time(media.started_at),
             logical_name="event_time",
         )
         self._set_field(fields, mapping.get("pet_name"), media.pet_name, logical_name="pet_name")
@@ -713,3 +718,8 @@ class FeishuBitableSink:
     @staticmethod
     def _normalize_option_name(value: str) -> str:
         return "".join(value.split()).strip().lower()
+
+    @staticmethod
+    def _format_event_time(value: datetime) -> str:
+        normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return normalized.astimezone(FEISHU_EVENT_TIMEZONE).strftime(FEISHU_EVENT_TIME_FORMAT)
