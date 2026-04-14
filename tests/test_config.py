@@ -21,3 +21,9 @@ def test_settings_detect_configured_integrations() -> None:
     assert settings.gemini_configured is True
     assert settings.feishu_configured is True
     assert settings.temp_media_root == Path("/tmp/meow")
+
+
+def test_settings_default_worker_stale_timeout_seconds() -> None:
+    settings = Settings()
+
+    assert settings.worker_stale_task_timeout_seconds == 600

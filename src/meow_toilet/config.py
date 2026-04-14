@@ -161,7 +161,7 @@ class Settings:
         default_factory=lambda: _read_int("WORKER_IDLE_SLEEP_SECONDS", 5),
     )
     worker_stale_task_timeout_seconds: int = field(
-        default_factory=lambda: _read_int("WORKER_STALE_TASK_TIMEOUT_SECONDS", 1800),
+        default_factory=lambda: _read_int("WORKER_STALE_TASK_TIMEOUT_SECONDS", 600),
     )
 
     @property
