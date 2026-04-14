@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title }}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #151a18;
+        --panel: rgba(247, 242, 234, 0.1);
+        --panel-strong: rgba(247, 242, 234, 0.16);
+        --ink: #f7f2ea;
+        --muted: rgba(247, 242, 234, 0.72);
+        --accent: #67e8c8;
+        --danger: #fda4af;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+        background:
+          radial-gradient(circle at top, rgba(103, 232, 200, 0.14), transparent 26%),
+          linear-gradient(180deg, #1b2220 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+
+      main {
+        width: min(1100px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 24px 0 40px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        font-size: 12px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.8rem, 4vw, 3rem);
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 6px;
+      }
+
+      .chip {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .player-shell {
+        position: relative;
+        overflow: hidden;
+        border-radius: 28px;
+        border: 1px solid rgba(247, 242, 234, 0.12);
+        background: #090b0a;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+      }
+
+      video {
+        display: block;
+        width: 100%;
+        max-height: calc(100vh - 220px);
+        background: #000;
+      }
+
+      .status {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        text-align: center;
+        background: linear-gradient(180deg, rgba(9, 11, 10, 0.4), rgba(9, 11, 10, 0.82));
+        color: var(--ink);
+        transition: opacity 180ms ease;
+      }
+
+      .status.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .status strong {
+        display: block;
+        font-size: 1.08rem;
+        margin-bottom: 8px;
+      }
+
+      .status.error strong {
+        color: var(--danger);
+      }
+
+      .actions {
+        margin-top: 16px;
+      }
+
+      a {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="eyebrow">PetKit Playback</div>
+        <h1>{{ task.media.device_id }} · {{ task.media.id }}</h1>
+        <p>播放器会按需下载并解码该任务视频，缓存文件会在下载后 24 小时内自动清理。</p>
+        <div class="meta">
+          <div class="chip">来源日期 {{ task.media.source_day }}</div>
+          <div class="chip">发现时间 {{ task.discovered_at|dashboard_datetime }}</div>
+          {% if task.media.pet_name %}
+          <div class="chip">猫 {{ task.media.pet_name }}</div>
+          {% endif %}
+          {% if task.event_time %}
+          <div class="chip">事件时间 {{ task.event_time|dashboard_datetime }}</div>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="player-shell">
+        <video
+          id="task-video"
+          controls
+          autoplay
+          playsinline
+          preload="metadata"
+          poster="/api/media/cover/{{ task.id }}"
+        >
+          <source src="{{ video_url }}" type="video/mp4" />
+        </video>
+        <div id="player-status" class="status">
+          <div>
+            <strong>正在准备视频…</strong>
+            <p>如果这是第一次打开该任务，服务端会先下载并解码，再开始播放。</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="actions">
+        <a href="/" target="_self">返回 dashboard</a>
+      </div>
+    </main>
+    <script>
+      const video = document.getElementById("task-video");
+      const status = document.getElementById("player-status");
+
+      function hideStatus() {
+        status.classList.add("hidden");
+      }
+
+      function showError() {
+        status.classList.remove("hidden");
+        status.classList.add("error");
+        status.innerHTML = `
+          <div>
+            <strong>视频暂时无法播放</strong>
+            <p>请稍后刷新重试；如果问题持续存在，可以回到 dashboard 重新处理这条任务。</p>
+          </div>
+        `;
+      }
+
+      video.addEventListener("loadeddata", hideStatus);
+      video.addEventListener("canplay", hideStatus);
+      video.addEventListener("error", showError);
+    </script>
+  </body>
+</html>

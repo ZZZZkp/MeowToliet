@@ -139,6 +139,26 @@
       .task-card {
         overflow: hidden;
         padding: 0;
+        position: relative;
+      }
+
+      .task-card.playable {
+        cursor: pointer;
+        transition:
+          transform 160ms ease,
+          box-shadow 160ms ease,
+          border-color 160ms ease;
+      }
+
+      .task-card.playable:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 24px 72px rgba(31, 37, 34, 0.1);
+        border-color: rgba(15, 118, 110, 0.24);
+      }
+
+      .task-card.playable:focus-visible {
+        outline: 3px solid rgba(15, 118, 110, 0.34);
+        outline-offset: 3px;
       }
 
       .cover {
@@ -210,6 +230,11 @@
       .detail-chip.warn {
         background: rgba(180, 83, 9, 0.12);
         color: var(--warn);
+      }
+
+      .detail-chip.action {
+        background: rgba(15, 118, 110, 0.12);
+        color: var(--accent);
       }
 
       .error-panel {
@@ -394,7 +419,13 @@
       <h2 class="section-title">最近任务</h2>
       <section class="task-grid">
         {% for task in snapshot.recent_tasks %}
-        <article class="card task-card">
+        <article
+          class="card task-card playable"
+          data-player-task-id="{{ task.id }}"
+          tabindex="0"
+          role="button"
+          aria-label="打开 {{ task.media.id }} 的视频回放"
+        >
           {% if task.preview_path or task.media.cover_url %}
           <img
             class="cover"
@@ -427,11 +458,12 @@
             </div>
             <div class="task-copy mono">{{ task.media.id }}</div>
             <div class="task-copy">
-              来源日期 {{ task.media.source_day }} · 发现时间 {{ task.discovered_at.isoformat() }}
+              来源日期 {{ task.media.source_day }} · 发现时间 {{ task.discovered_at|dashboard_datetime }}
             </div>
             <div class="detail-grid">
               <div class="detail-row">
                 <div class="detail-chip">分析尝试 {{ task.attempts }} 次</div>
+                <div class="detail-chip action">点击卡片播放原视频</div>
                 {% if task.feishu_sync_status %}
                 <div class="detail-chip">飞书尝试 {{ task.feishu_sync_attempts }} 次</div>
                 {% endif %}
@@ -442,24 +474,24 @@
               {% if task.event_time or task.finished_at or task.feishu_synced_at %}
               <div class="detail-row">
                 {% if task.event_time %}
-                <div class="detail-chip">事件时间 {{ task.event_time.isoformat() }}</div>
+                <div class="detail-chip">事件时间 {{ task.event_time|dashboard_datetime }}</div>
                 {% endif %}
                 {% if task.finished_at %}
-                <div class="detail-chip">分析完成 {{ task.finished_at.isoformat() }}</div>
+                <div class="detail-chip">分析完成 {{ task.finished_at|dashboard_datetime }}</div>
                 {% endif %}
                 {% if task.feishu_synced_at %}
-                <div class="detail-chip">飞书完成 {{ task.feishu_synced_at.isoformat() }}</div>
+                <div class="detail-chip">飞书完成 {{ task.feishu_synced_at|dashboard_datetime }}</div>
                 {% endif %}
               </div>
               {% endif %}
               {% if task.next_attempt_at or task.feishu_sync_next_attempt_at %}
               <div class="detail-row">
                 {% if task.next_attempt_at %}
-                <div class="detail-chip warn">分析重试 {{ task.next_attempt_at.isoformat() }}</div>
+                <div class="detail-chip warn">分析重试 {{ task.next_attempt_at|dashboard_datetime }}</div>
                 {% endif %}
                 {% if task.feishu_sync_next_attempt_at %}
                 <div class="detail-chip warn">
-                  飞书重试 {{ task.feishu_sync_next_attempt_at.isoformat() }}
+                  飞书重试 {{ task.feishu_sync_next_attempt_at|dashboard_datetime }}
                 </div>
                 {% endif %}
               </div>
@@ -507,6 +539,13 @@
             </details>
             {% endif %}
             <div class="control-row">
+              <button
+                class="button open-player-button"
+                data-task-id="{{ task.id }}"
+                type="button"
+              >
+                新窗口播放
+              </button>
               <button class="button secondary retry-button" data-task-id="{{ task.id }}" type="button">
                 处理这条任务
               </button>
@@ -524,13 +563,74 @@
       </section>
     </main>
     <script>
+      const dashboardTimezone = {{ dashboard_timezone|tojson }};
       const sourceDayInput = document.getElementById("source-day");
       const operationResult = document.getElementById("operation-result");
       const pollButton = document.getElementById("poll-button");
       const processNextButton = document.getElementById("process-next-button");
 
+      function formatDateParts(date, options) {
+        return new Intl.DateTimeFormat("en-CA", {
+          ...options,
+          timeZone: dashboardTimezone,
+          hour12: false,
+        }).formatToParts(date).reduce((result, part) => {
+          if (part.type !== "literal") {
+            result[part.type] = part.value;
+          }
+          return result;
+        }, {});
+      }
+
+      function formatDashboardDatetime(value) {
+        if (!value) {
+          return value;
+        }
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return String(value);
+        }
+        const parts = formatDateParts(date, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+      }
+
+      function formatDashboardDate(value) {
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return "";
+        }
+        const parts = formatDateParts(date, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        });
+        return `${parts.year}-${parts.month}-${parts.day}`;
+      }
+
+      function normalizeDashboardTimes(value) {
+        if (Array.isArray(value)) {
+          return value.map(normalizeDashboardTimes);
+        }
+        if (value && typeof value === "object") {
+          return Object.fromEntries(
+            Object.entries(value).map(([key, nestedValue]) => [key, normalizeDashboardTimes(nestedValue)]),
+          );
+        }
+        if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+          return formatDashboardDatetime(value);
+        }
+        return value;
+      }
+
       if (!sourceDayInput.value) {
-        sourceDayInput.value = new Date().toISOString().slice(0, 10);
+        sourceDayInput.value = formatDashboardDate(new Date());
       }
 
       function buildCoverPlaceholder(deviceId, taskId) {
@@ -570,6 +670,17 @@
         });
       });
 
+      function buildPlayerUrl(taskId) {
+        return `/tasks/${encodeURIComponent(taskId)}/player`;
+      }
+
+      function openTaskPlayer(taskId) {
+        const opened = window.open(buildPlayerUrl(taskId), "_blank", "noopener,noreferrer");
+        if (!opened) {
+          window.location.href = buildPlayerUrl(taskId);
+        }
+      }
+
       async function runOperation(button, url) {
         const previous = button.textContent;
         button.disabled = true;
@@ -577,7 +688,7 @@
         try {
           const response = await fetch(url, { method: "POST" });
           const payload = await response.json();
-          operationResult.textContent = JSON.stringify(payload, null, 2);
+          operationResult.textContent = JSON.stringify(normalizeDashboardTimes(payload), null, 2);
           window.setTimeout(() => window.location.reload(), 500);
         } catch (error) {
           operationResult.textContent = String(error);
@@ -595,6 +706,32 @@
 
       processNextButton.addEventListener("click", async () => {
         await runOperation(processNextButton, "/api/operations/process-next");
+      });
+
+      document.querySelectorAll(".task-card[data-player-task-id]").forEach((card) => {
+        card.addEventListener("click", (event) => {
+          if (event.target.closest("button, a, summary, details, input, textarea, select")) {
+            return;
+          }
+          openTaskPlayer(card.dataset.playerTaskId);
+        });
+
+        card.addEventListener("keydown", (event) => {
+          if (event.target !== card) {
+            return;
+          }
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+          event.preventDefault();
+          openTaskPlayer(card.dataset.playerTaskId);
+        });
+      });
+
+      document.querySelectorAll(".open-player-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          openTaskPlayer(button.dataset.taskId);
+        });
       });
 
       document.querySelectorAll(".retry-button").forEach((button) => {

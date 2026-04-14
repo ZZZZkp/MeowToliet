@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from meow_toilet.app.dependencies import (
     get_dashboard_media_service,
     get_dashboard_snapshot_service,
+    get_dashboard_video_service,
     get_manual_operations_service,
 )
 from meow_toilet.app.main import app
@@ -20,6 +21,7 @@ from meow_toilet.domain.entities import (
     SchedulerPollResult,
     SyncStatus,
 )
+from meow_toilet.services.dashboard import DashboardVideoAsset
 
 
 class FakeSnapshotService:
@@ -100,13 +102,48 @@ class FakeMediaService:
         return self.asset
 
 
-def test_operations_api_routes_return_action_results_and_snapshot() -> None:
+class FakeVideoService:
+    def __init__(
+        self,
+        *,
+        task: MediaTask | None,
+        asset: DashboardVideoAsset | None,
+    ) -> None:
+        self.task = task
+        self.asset = asset
+        self.task_calls: list[str] = []
+        self.asset_calls: list[str] = []
+
+    async def get_task(self, task_id: str) -> MediaTask | None:
+        self.task_calls.append(task_id)
+        return self.task
+
+    async def load_video_asset(self, task_id: str) -> DashboardVideoAsset | None:
+        self.asset_calls.append(task_id)
+        return self.asset
+
+    async def aclose(self) -> None:
+        return None
+
+
+def test_operations_api_routes_return_action_results_and_snapshot(tmp_path) -> None:
     snapshot_service = FakeSnapshotService()
     operations_service = FakeOperationsService()
     media_service = FakeMediaService((b"fake-cover", "image/jpeg"))
+    video_file = tmp_path / "video.mp4"
+    video_file.write_bytes(b"fake-video")
+    video_service = FakeVideoService(
+        task=operations_service._build_task(task_id="device-1:media-77"),
+        asset=DashboardVideoAsset(
+            path=video_file,
+            media_type="video/mp4",
+            prepared_at=datetime(2026, 4, 10, 8, 0, tzinfo=UTC),
+        ),
+    )
     app.dependency_overrides[get_dashboard_snapshot_service] = lambda: snapshot_service
     app.dependency_overrides[get_manual_operations_service] = lambda: operations_service
     app.dependency_overrides[get_dashboard_media_service] = lambda: media_service
+    app.dependency_overrides[get_dashboard_video_service] = lambda: video_service
 
     try:
         client = TestClient(app)
@@ -115,6 +152,8 @@ def test_operations_api_routes_return_action_results_and_snapshot() -> None:
         process_next_response = client.post("/api/operations/process-next")
         process_task_response = client.post("/api/operations/process/device-1:media-77")
         cover_response = client.get("/api/media/cover/device-1:media-77")
+        player_response = client.get("/tasks/device-1:media-77/player")
+        video_response = client.get("/api/media/video/device-1:media-77")
 
         assert poll_response.status_code == 200
         assert poll_response.json()["result"]["source_day"] == "2026-04-09"
@@ -130,11 +169,21 @@ def test_operations_api_routes_return_action_results_and_snapshot() -> None:
         assert cover_response.headers["content-type"] == "image/jpeg"
         assert cover_response.headers["cache-control"] == "no-store, max-age=0"
         assert cover_response.headers["pragma"] == "no-cache"
+        assert player_response.status_code == 200
+        assert "/api/media/video/device-1:media-77" in player_response.text
+        assert "缓存文件会在下载后 24 小时内自动清理" in player_response.text
+        assert video_response.status_code == 200
+        assert video_response.content == b"fake-video"
+        assert video_response.headers["content-type"] == "video/mp4"
+        assert video_response.headers["cache-control"] == "no-store, max-age=0"
+        assert video_response.headers["pragma"] == "no-cache"
 
         assert operations_service.poll_calls == ["2026-04-09"]
         assert operations_service.process_next_calls == 1
         assert operations_service.process_task_calls == ["device-1:media-77"]
         assert media_service.calls == ["device-1:media-77"]
+        assert video_service.task_calls == ["device-1:media-77"]
+        assert video_service.asset_calls == ["device-1:media-77"]
     finally:
         app.dependency_overrides.clear()
 
@@ -148,6 +197,23 @@ def test_cover_api_returns_404_when_cover_is_unavailable() -> None:
 
         assert response.status_code == 404
         assert response.json() == {"detail": "Cover not found."}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_video_routes_return_404_when_task_or_video_is_unavailable() -> None:
+    missing_video_service = FakeVideoService(task=None, asset=None)
+    app.dependency_overrides[get_dashboard_video_service] = lambda: missing_video_service
+
+    try:
+        client = TestClient(app)
+        player_response = client.get("/tasks/missing-task/player", follow_redirects=False)
+        video_response = client.get("/api/media/video/missing-task", follow_redirects=False)
+
+        assert player_response.status_code == 404
+        assert player_response.json() == {"detail": "Task not found."}
+        assert video_response.status_code == 404
+        assert video_response.json() == {"detail": "Video not found."}
     finally:
         app.dependency_overrides.clear()
 
@@ -211,10 +277,15 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
         assert "飞书 pending" in response.text
         assert "分析尝试 2 次" in response.text
         assert "飞书尝试 1 次" in response.text
-        assert "飞书重试 2026-04-10T08:05:00+00:00" in response.text
+        assert "发现时间 2026-04-10 15:56:00" in response.text
+        assert "事件时间 2026-04-10 15:55:12" in response.text
+        assert "飞书重试 2026-04-10 16:05:00" in response.text
         assert "猫 翠饼" in response.text
         assert "查看 Gemini 摘要" in response.text
         assert "Gemini says this looks like a short pee event." in response.text
         assert "buildCoverPlaceholder" in response.text
+        assert "openTaskPlayer" in response.text
+        assert "新窗口播放" in response.text
+        assert 'const dashboardTimezone = "Asia/Shanghai";' in response.text
     finally:
         app.dependency_overrides.clear()

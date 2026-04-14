@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from meow_toilet.adapters.petkit import PetKitApiAdapter
+from meow_toilet.adapters.video import FfmpegVideoProcessor
+from meow_toilet.config import get_settings
 from meow_toilet.runtime import create_job_dispatcher, create_task_store
-from meow_toilet.services.dashboard import DashboardMediaService, DashboardSnapshotService
+from meow_toilet.services.dashboard import (
+    DashboardMediaService,
+    DashboardSnapshotService,
+    DashboardVideoService,
+)
 from meow_toilet.services.interfaces import JobDispatcher, MediaTaskStore
 from meow_toilet.services.operations import ManualOperationsService
 
@@ -24,6 +31,17 @@ def get_dashboard_snapshot_service() -> DashboardSnapshotService:
 
 def get_dashboard_media_service() -> DashboardMediaService:
     return DashboardMediaService(task_store=get_task_store())
+
+
+@lru_cache(maxsize=1)
+def get_dashboard_video_service() -> DashboardVideoService:
+    settings = get_settings()
+    return DashboardVideoService(
+        task_store=get_task_store(),
+        petkit=PetKitApiAdapter.from_settings(settings),
+        video_processor=FfmpegVideoProcessor(),
+        cache_root=settings.temp_media_root / "dashboard_videos",
+    )
 
 
 def get_manual_operations_service() -> ManualOperationsService:

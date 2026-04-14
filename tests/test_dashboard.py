@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from meow_toilet.config import Settings
@@ -15,7 +15,12 @@ from meow_toilet.domain.entities import (
     ScreenshotArtifact,
 )
 from meow_toilet.scheduler.service import SchedulerHeartbeat
-from meow_toilet.services.dashboard import DashboardMediaService, DashboardSnapshotService
+from meow_toilet.services.dashboard import (
+    DashboardMediaService,
+    DashboardSnapshotService,
+    DashboardVideoService,
+    format_dashboard_datetime,
+)
 from meow_toilet.services.retries import RetryPolicy
 from meow_toilet.services.task_store import InMemoryMediaTaskStore
 from meow_toilet.workers.jobs import MediaJobWorker
@@ -46,6 +51,37 @@ class SuccessfulPipeline:
 class SuccessfulFeishuSyncService:
     async def sync_task(self, task: MediaTask) -> str | None:
         return "rec-dashboard"
+
+
+class FakeDashboardPetKitGateway:
+    def __init__(self) -> None:
+        self.download_calls: list[str] = []
+        self.closed = False
+
+    async def download_media(self, media: PetKitMedia, destination: Path) -> Path:
+        self.download_calls.append(media.dedupe_key)
+        destination.write_bytes(b"encrypted-video")
+        return destination
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class FakeDashboardVideoProcessor:
+    def __init__(self) -> None:
+        self.decode_calls: list[Path] = []
+
+    async def decode(self, encrypted_video: Path) -> Path:
+        self.decode_calls.append(encrypted_video)
+        decoded_path = encrypted_video.with_name("decoded.mp4")
+        decoded_path.write_bytes(b"decoded-video")
+        return decoded_path
+
+
+def test_format_dashboard_datetime_converts_to_asia_shanghai() -> None:
+    value = datetime(2026, 4, 9, 8, 3, 4, tzinfo=UTC)
+
+    assert format_dashboard_datetime(value, timezone_name="Asia/Shanghai") == "2026-04-09 16:03:04"
 
 
 def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
@@ -226,5 +262,101 @@ def test_dashboard_media_service_returns_placeholder_when_persisted_preview_is_i
         content, media_type = asset
         assert media_type == "image/svg+xml"
         assert "PetKit 预览暂不可用".encode() in content
+
+    asyncio.run(run_test())
+
+
+def test_dashboard_video_service_downloads_decodes_and_reuses_cached_video(tmp_path: Path) -> None:
+    sample_media = PetKitMedia(
+        id="media-dashboard-5",
+        device_id="device-5",
+        started_at=datetime(2026, 4, 9, 12, 58, tzinfo=UTC),
+        cover_url="https://example.com/cover-dashboard-5.jpg",
+        encrypted_download_url="https://example.com/video-dashboard-5.mp4",
+        source_day="2026-04-09",
+    )
+    task_store = InMemoryMediaTaskStore()
+    petkit = FakeDashboardPetKitGateway()
+    video_processor = FakeDashboardVideoProcessor()
+
+    async def run_test() -> None:
+        await task_store.enqueue_media(
+            sample_media,
+            discovered_at=datetime(2026, 4, 9, 12, 59, tzinfo=UTC),
+        )
+        service = DashboardVideoService(
+            task_store=task_store,
+            petkit=petkit,
+            video_processor=video_processor,
+            cache_root=tmp_path / "dashboard-videos",
+            now_provider=lambda: datetime(2026, 4, 9, 13, 0, tzinfo=UTC),
+        )
+        try:
+            first = await service.load_video_asset("device-5:media-dashboard-5")
+            second = await service.load_video_asset("device-5:media-dashboard-5")
+
+            assert first is not None
+            assert second is not None
+            assert first.path == second.path
+            assert first.path.read_bytes() == b"decoded-video"
+            assert first.media_type == "video/mp4"
+            assert petkit.download_calls == ["device-5:media-dashboard-5"]
+            assert len(video_processor.decode_calls) == 1
+        finally:
+            await service.aclose()
+            assert petkit.closed is True
+
+    asyncio.run(run_test())
+
+
+def test_dashboard_video_service_removes_expired_video_and_regenerates_it(tmp_path: Path) -> None:
+    sample_media = PetKitMedia(
+        id="media-dashboard-6",
+        device_id="device-6",
+        started_at=datetime(2026, 4, 9, 13, 58, tzinfo=UTC),
+        cover_url="https://example.com/cover-dashboard-6.jpg",
+        encrypted_download_url="https://example.com/video-dashboard-6.mp4",
+        source_day="2026-04-09",
+    )
+    task_store = InMemoryMediaTaskStore()
+    petkit = FakeDashboardPetKitGateway()
+    video_processor = FakeDashboardVideoProcessor()
+    current_time = datetime(2026, 4, 9, 14, 0, tzinfo=UTC)
+
+    def now_provider() -> datetime:
+        return current_time
+
+    async def run_test() -> None:
+        nonlocal current_time
+        await task_store.enqueue_media(
+            sample_media,
+            discovered_at=datetime(2026, 4, 9, 13, 59, tzinfo=UTC),
+        )
+        service = DashboardVideoService(
+            task_store=task_store,
+            petkit=petkit,
+            video_processor=video_processor,
+            cache_root=tmp_path / "dashboard-videos",
+            now_provider=now_provider,
+        )
+        try:
+            first = await service.load_video_asset("device-6:media-dashboard-6")
+            assert first is not None
+            assert first.path.exists()
+
+            current_time = current_time + timedelta(days=2)
+            await service.cleanup_expired_videos()
+            assert first.path.exists() is False
+
+            regenerated = await service.load_video_asset("device-6:media-dashboard-6")
+            assert regenerated is not None
+            assert regenerated.path.exists()
+            assert petkit.download_calls == [
+                "device-6:media-dashboard-6",
+                "device-6:media-dashboard-6",
+            ]
+            assert len(video_processor.decode_calls) == 2
+        finally:
+            await service.aclose()
 
     asyncio.run(run_test())
