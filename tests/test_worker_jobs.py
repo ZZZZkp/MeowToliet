@@ -110,11 +110,14 @@ def test_worker_marks_task_succeeded_after_pipeline_run() -> None:
         assert task is not None
         assert task.status == JobStatus.SUCCEEDED
         assert task.attempts == 1
-        assert task.feishu_record_id == "rec-123"
-        assert task.feishu_sync_status == SyncStatus.SUCCEEDED
-        assert task.feishu_sync_attempts == 1
+        assert task.feishu_record_id is None
+        assert task.feishu_sync_status == SyncStatus.PENDING
         assert task.elimination_type == EliminationType.POOP
         assert task.confidence == 0.91
+        synced = await worker.process_next_job()
+        assert synced is not None
+        assert synced.feishu_record_id == "rec-123"
+        assert synced.feishu_sync_status == SyncStatus.SUCCEEDED
 
     asyncio.run(run_test())
 
@@ -232,10 +235,13 @@ def test_worker_retries_feishu_sync_after_analysis_succeeds() -> None:
             media,
             discovered_at=datetime(2026, 4, 9, 12, 59, tzinfo=timezone.utc),
         )
+        analyzed = await worker.process_next_job()
         retried_sync = await worker.process_next_job()
 
+        assert analyzed is not None
+        assert analyzed.status == JobStatus.SUCCEEDED
+        assert analyzed.feishu_sync_status == SyncStatus.PENDING
         assert retried_sync is not None
-        assert retried_sync.status == JobStatus.SUCCEEDED
         assert retried_sync.feishu_sync_status == SyncStatus.PENDING
         assert retried_sync.feishu_sync_attempts == 1
         assert retried_sync.feishu_sync_last_error_kind == "rate_limit"
@@ -244,55 +250,10 @@ def test_worker_retries_feishu_sync_after_analysis_succeeds() -> None:
             4,
             9,
             13,
-            4,
+            5,
             30,
             tzinfo=timezone.utc,
         )
-
-    asyncio.run(run_test())
-
-
-def test_worker_process_task_runs_analysis_and_feishu_sync_in_one_call() -> None:
-    media = PetKitMedia(
-        id="media-manual-1",
-        device_id="device-manual-1",
-        started_at=datetime(2026, 4, 9, 13, 30, tzinfo=timezone.utc),
-        cover_url=None,
-        encrypted_download_url="https://example.com/video-manual-1.mp4",
-        source_day="2026-04-09",
-    )
-    task_store = InMemoryMediaTaskStore()
-    clock = iter(
-        [
-            datetime(2026, 4, 9, 13, 30, tzinfo=timezone.utc),
-            datetime(2026, 4, 9, 13, 31, tzinfo=timezone.utc),
-            datetime(2026, 4, 9, 13, 32, tzinfo=timezone.utc),
-            datetime(2026, 4, 9, 13, 33, tzinfo=timezone.utc),
-            datetime(2026, 4, 9, 13, 34, tzinfo=timezone.utc),
-            datetime(2026, 4, 9, 13, 35, tzinfo=timezone.utc),
-        ],
-    )
-    worker = MediaJobWorker(
-        task_store=task_store,
-        pipeline=SuccessfulPipeline(),
-        feishu_sync_service=SuccessfulFeishuSyncService(),
-        retry_policy=RetryPolicy(max_attempts=5, backoff_seconds=30, max_backoff_seconds=900),
-        stale_task_timeout_seconds=1800,
-        now_provider=lambda: next(clock),
-    )
-
-    async def run_test() -> None:
-        task, _ = await task_store.enqueue_media(
-            media,
-            discovered_at=datetime(2026, 4, 9, 13, 29, tzinfo=timezone.utc),
-        )
-        processed = await worker.process_task(task.id)
-
-        assert processed is not None
-        assert processed.status == JobStatus.SUCCEEDED
-        assert processed.feishu_sync_status == SyncStatus.SUCCEEDED
-        assert processed.feishu_record_id == "rec-123"
-        assert processed.feishu_sync_attempts == 1
 
     asyncio.run(run_test())
 

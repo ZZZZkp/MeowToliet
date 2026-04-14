@@ -58,7 +58,7 @@ class MediaJobWorker:
             started = await self._task_store.start_task(task_id, started_at=self._now_provider())
             if started is None:
                 return task
-            return await self._process_task_pipeline(started)
+            return await self._process_started_task(started)
         if task.status == JobStatus.SUCCEEDED and task.feishu_sync_status in {
             SyncStatus.PENDING,
             SyncStatus.FAILED,
@@ -76,27 +76,11 @@ class MediaJobWorker:
         await self._recover_stale_tasks()
         task = await self._task_store.start_next_task(started_at=self._now_provider())
         if task is not None:
-            return await self._process_task_pipeline(task)
+            return await self._process_started_task(task)
         sync_task = await self._task_store.start_next_feishu_sync(started_at=self._now_provider())
         if sync_task is not None:
             return await self._process_feishu_sync(sync_task)
         return None
-
-    async def _process_task_pipeline(self, task: MediaTask) -> MediaTask:
-        processed_task = await self._process_started_task(task)
-        if (
-            processed_task.status != JobStatus.SUCCEEDED
-            or processed_task.feishu_sync_status not in {SyncStatus.PENDING, SyncStatus.FAILED}
-        ):
-            return processed_task
-
-        started_sync = await self._task_store.start_feishu_sync(
-            processed_task.id,
-            started_at=self._now_provider(),
-        )
-        if started_sync is None:
-            return processed_task
-        return await self._process_feishu_sync(started_sync)
 
     async def _recover_stale_tasks(self) -> None:
         recovered_at = self._now_provider()
