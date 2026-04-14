@@ -76,6 +76,9 @@ class Settings:
     petkit_poll_interval_seconds: int = field(
         default_factory=lambda: _read_int("PETKIT_POLL_INTERVAL_SECONDS", 21600),
     )
+    petkit_poll_check_interval_seconds: int = field(
+        default_factory=lambda: _read_int("PETKIT_POLL_CHECK_INTERVAL_SECONDS", 600),
+    )
     petkit_session_refresh_seconds: int = field(
         default_factory=lambda: _read_int("PETKIT_SESSION_REFRESH_SECONDS", 1800),
     )
@@ -136,6 +139,9 @@ class Settings:
     preview_root: Path = field(
         default_factory=lambda: Path(_read_str("PREVIEW_ROOT", "./tmp/previews")),
     )
+    scheduler_state_path: Path = field(
+        default_factory=lambda: Path(_read_str("SCHEDULER_STATE_PATH", "./tmp/scheduler_state.json")),
+    )
     max_concurrent_decodes: int = field(
         default_factory=lambda: _read_int("MAX_CONCURRENT_DECODES", 2),
     )
@@ -192,6 +198,7 @@ class Settings:
             "arq_queue_name": self.arq_queue_name,
             "petkit_region": self.petkit_region,
             "petkit_poll_interval_seconds": self.petkit_poll_interval_seconds,
+            "petkit_poll_check_interval_seconds": self.petkit_poll_check_interval_seconds,
             "petkit_session_refresh_seconds": self.petkit_session_refresh_seconds,
             "petkit_device_ids": self.petkit_device_ids,
             "gemini_model": self.gemini_model,
@@ -200,6 +207,7 @@ class Settings:
             "temp_media_root": str(self.temp_media_root),
             "screenshot_root": str(self.screenshot_root),
             "preview_root": str(self.preview_root),
+            "scheduler_state_path": str(self.scheduler_state_path),
             "max_concurrent_decodes": self.max_concurrent_decodes,
             "max_concurrent_analyses": self.max_concurrent_analyses,
             "worker_retry_max_attempts": self.worker_retry_max_attempts,

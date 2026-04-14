@@ -123,3 +123,9 @@ class MediaTaskStore(Protocol):
 
 class JobDispatcher(Protocol):
     async def enqueue_media_task(self, task_id: str) -> bool: ...
+
+
+class SchedulerStateStore(Protocol):
+    async def get_last_successful_poll_at(self) -> datetime | None: ...
+
+    async def set_last_successful_poll_at(self, occurred_at: datetime) -> None: ...

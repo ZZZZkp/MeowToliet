@@ -34,7 +34,7 @@ Use this skill when working inside the MeowToliet repository.
 5. Add or update tests before wiring external services whenever a behavior can be isolated.
 6. Favor small retries, idempotent writes, and dedupe keys based on PetKit media identity.
 7. Preserve the low-frequency home-use bias: manual controls and light operational flow beat overbuilt automation.
-8. After any code, config, migration, or template change that affects runtime behavior, rebuild the Docker services before considering the change live. Use `docker compose up -d --build web scheduler worker` unless the task clearly only affects the test image.
+8. After any code, config, migration, or template change that affects runtime behavior, bring the runtime containers back up before considering the change live. Because the runtime services do not mount repository source code from the host, use `docker compose up -d --build web scheduler worker` instead of a plain restart when you need the running dashboard, scheduler, or worker to pick up repository changes.
 
 ## Data expectations
 
@@ -57,7 +57,7 @@ Use this skill when working inside the MeowToliet repository.
 - Dashboard cover delivery now reads persisted local preview files from task state. Scheduler is responsible for downloading and persisting previews during polling, and the dashboard should only fall back to placeholders when the local preview file is missing or invalid.
 - The fastest way to inspect live Feishu columns and single-select options is `python3 -m meow_toilet.phase0_feishu_fields`.
 - The fastest way to verify the whole current chain is `phase0_petkit -> phase0_media -> phase0_gemini -> phase0_feishu`.
-- The runtime containers do not live-reload repository code from the host. Rebuild containers after repository changes if you want the running dashboard, scheduler, or worker to use the new code.
+- The runtime containers do not live-reload repository code from the host. After repository changes, refresh the runtime stack with `docker compose up -d --build web scheduler worker` if you want the running dashboard, scheduler, or worker to use the new code.
 
 ## References
 

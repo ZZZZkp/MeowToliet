@@ -12,6 +12,7 @@
 - Feishu Bitable image upload, single-select mapping, and record creation work.
 - Feishu field mapping can fall back to real Chinese and English column aliases.
 - Dashboard manual actions can poll, process the next task, and retry an individual failed task.
+- Scheduler CLI and worker CLI can both run in loop mode for long-lived background operation.
 - Docker `web` starts against PostgreSQL and Redis and serves the live dashboard on port `8000`.
 - The repository is committed locally and pushed to GitHub.
 
@@ -65,7 +66,8 @@ Leave the other Feishu field mapping variables empty until matching columns exis
 
 ## Recommended next work
 
-1. Turn the current manual dashboard actions into long-running scheduler and worker loops.
+1. Expand the dashboard with attempt counts, retry timing, sync-stage visibility, and richer failure inspection.
 2. Add replay and richer investigation tools on top of the existing cover and queue board.
 3. Expand the Bitable schema so more structured fields can be synced directly.
-4. Decide whether background workers should remain optional in low-frequency home mode.
+4. Tighten multi-worker claiming semantics if the deployment grows beyond a single worker container.
+5. Decide whether background workers should remain optional in low-frequency home mode.

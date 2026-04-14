@@ -7,6 +7,7 @@ from pathlib import Path
 from meow_toilet.domain.entities import PetKitDevice, PetKitMedia
 from meow_toilet.scheduler.service import PetKitPollingScheduler
 from meow_toilet.services.artifacts import PersistentArtifactStore
+from meow_toilet.services.scheduler_state import InMemorySchedulerStateStore
 from meow_toilet.services.task_store import InMemoryMediaTaskStore
 
 
@@ -96,5 +97,52 @@ def test_scheduler_poll_enqueues_media_and_dedupes_existing_tasks(tmp_path: Path
         assert tasks[0].preview_path.exists()
         assert tasks[0].preview_path.parent.name == "previews"
         assert dispatcher.enqueued_task_ids == ["device-1:media-1"]
+
+    asyncio.run(run_test())
+
+
+def test_scheduler_poll_due_uses_persisted_last_successful_poll_time(tmp_path: Path) -> None:
+    media = PetKitMedia(
+        id="media-2",
+        device_id="device-2",
+        started_at=datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+        cover_url="https://example.com/cover-2.jpg",
+        encrypted_download_url="https://example.com/video-2.mp4",
+        source_day="2026-04-09",
+    )
+    petkit = FakePetKitGateway({"device-2": [media]})
+    task_store = InMemoryMediaTaskStore()
+    artifact_store = PersistentArtifactStore(tmp_path / "screenshots", tmp_path / "previews")
+    state_store = InMemorySchedulerStateStore(
+        last_successful_poll_at=datetime(2026, 4, 9, 4, 30, tzinfo=UTC),
+    )
+    clock = iter(
+        [
+            datetime(2026, 4, 9, 10, 0, tzinfo=UTC),
+            datetime(2026, 4, 9, 10, 31, tzinfo=UTC),
+            datetime(2026, 4, 9, 10, 31, 1, tzinfo=UTC),
+            datetime(2026, 4, 9, 10, 31, 2, tzinfo=UTC),
+            datetime(2026, 4, 9, 10, 31, 3, tzinfo=UTC),
+        ],
+    )
+    scheduler = PetKitPollingScheduler(
+        petkit=petkit,
+        task_store=task_store,
+        artifact_store=artifact_store,
+        state_store=state_store,
+        poll_interval_seconds=21600,
+        now_provider=lambda: next(clock),
+    )
+
+    async def run_test() -> None:
+        skipped = await scheduler.poll_due(source_day="2026-04-09")
+        executed = await scheduler.poll_due(source_day="2026-04-09")
+        last_successful_poll_at = await state_store.get_last_successful_poll_at()
+
+        assert skipped is None
+        assert executed is not None
+        assert executed.enqueued_task_count == 1
+        assert petkit.ensure_session_calls == 1
+        assert last_successful_poll_at == datetime(2026, 4, 9, 10, 31, 2, tzinfo=UTC)
 
     asyncio.run(run_test())

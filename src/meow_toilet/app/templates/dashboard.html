@@ -180,6 +180,64 @@
         color: var(--muted);
       }
 
+      .detail-grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .detail-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+      }
+
+      .detail-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(31, 37, 34, 0.05);
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .detail-chip.fail {
+        background: var(--rose-soft);
+        color: var(--rose);
+      }
+
+      .detail-chip.warn {
+        background: rgba(180, 83, 9, 0.12);
+        color: var(--warn);
+      }
+
+      .error-panel {
+        display: grid;
+        gap: 6px;
+        border-radius: 18px;
+        padding: 12px 14px;
+        background: rgba(190, 18, 60, 0.06);
+        border: 1px solid rgba(190, 18, 60, 0.12);
+      }
+
+      .summary-panel {
+        border-radius: 18px;
+        border: 1px solid rgba(31, 37, 34, 0.08);
+        background: rgba(255, 255, 255, 0.44);
+        padding: 12px 14px;
+      }
+
+      .summary-panel summary {
+        cursor: pointer;
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .summary-panel[open] summary {
+        margin-bottom: 10px;
+      }
+
       .mono {
         font-family: "SFMono-Regular", "Menlo", monospace;
         font-size: 0.84rem;
@@ -293,14 +351,14 @@
         <article class="card">
           <div class="label">轮询节奏</div>
           <div class="meta">
+            <span>每 {{ snapshot.check_interval_seconds }} 秒轻量检查一次调度状态</span>
             <span>每 {{ snapshot.poll_interval_seconds }} 秒轮询一次</span>
-            <span>每 {{ snapshot.refresh_interval_seconds }} 秒刷新一次会话</span>
             <span>当前累计 {{ snapshot.queue.total }} 条任务</span>
             <span>存储后端：{{ task_store_backend }}</span>
             <span>派发后端：{{ dispatcher_backend }}</span>
           </div>
           <p>
-            看板现在读取的是调度器和处理器共用的任务流，不再只是静态展示配置是否填写。
+            调度器现在会持久化上次成功拉取时间，按固定检查节奏醒来，只在真正到达轮询窗口时访问 PetKit。
           </p>
         </article>
       </section>
@@ -371,6 +429,54 @@
             <div class="task-copy">
               来源日期 {{ task.media.source_day }} · 发现时间 {{ task.discovered_at.isoformat() }}
             </div>
+            <div class="detail-grid">
+              <div class="detail-row">
+                <div class="detail-chip">分析尝试 {{ task.attempts }} 次</div>
+                {% if task.feishu_sync_status %}
+                <div class="detail-chip">飞书尝试 {{ task.feishu_sync_attempts }} 次</div>
+                {% endif %}
+                {% if task.media.pet_name %}
+                <div class="detail-chip">猫 {{ task.media.pet_name }}</div>
+                {% endif %}
+              </div>
+              {% if task.event_time or task.finished_at or task.feishu_synced_at %}
+              <div class="detail-row">
+                {% if task.event_time %}
+                <div class="detail-chip">事件时间 {{ task.event_time.isoformat() }}</div>
+                {% endif %}
+                {% if task.finished_at %}
+                <div class="detail-chip">分析完成 {{ task.finished_at.isoformat() }}</div>
+                {% endif %}
+                {% if task.feishu_synced_at %}
+                <div class="detail-chip">飞书完成 {{ task.feishu_synced_at.isoformat() }}</div>
+                {% endif %}
+              </div>
+              {% endif %}
+              {% if task.next_attempt_at or task.feishu_sync_next_attempt_at %}
+              <div class="detail-row">
+                {% if task.next_attempt_at %}
+                <div class="detail-chip warn">分析重试 {{ task.next_attempt_at.isoformat() }}</div>
+                {% endif %}
+                {% if task.feishu_sync_next_attempt_at %}
+                <div class="detail-chip warn">
+                  飞书重试 {{ task.feishu_sync_next_attempt_at.isoformat() }}
+                </div>
+                {% endif %}
+              </div>
+              {% endif %}
+              {% if task.last_error_kind or task.feishu_sync_last_error_kind %}
+              <div class="detail-row">
+                {% if task.last_error_kind %}
+                <div class="detail-chip fail">分析失败类型 {{ task.last_error_kind }}</div>
+                {% endif %}
+                {% if task.feishu_sync_last_error_kind %}
+                <div class="detail-chip fail">
+                  飞书失败类型 {{ task.feishu_sync_last_error_kind }}
+                </div>
+                {% endif %}
+              </div>
+              {% endif %}
+            </div>
             {% if task.feishu_record_id %}
             <div class="task-copy mono">Feishu Record {{ task.feishu_record_id }}</div>
             {% endif %}
@@ -383,12 +489,22 @@
             <div class="task-copy">{{ task.stool_shape_note }}</div>
             {% endif %}
             {% if task.last_error %}
-            <div class="task-copy" style="color: var(--rose)">{{ task.last_error }}</div>
+            <div class="error-panel">
+              <div class="label">分析失败</div>
+              <div class="task-copy" style="color: var(--rose)">{{ task.last_error }}</div>
+            </div>
             {% endif %}
             {% if task.feishu_sync_last_error %}
-            <div class="task-copy" style="color: var(--rose)">
-              飞书同步失败：{{ task.feishu_sync_last_error }}
+            <div class="error-panel">
+              <div class="label">飞书同步失败</div>
+              <div class="task-copy" style="color: var(--rose)">{{ task.feishu_sync_last_error }}</div>
             </div>
+            {% endif %}
+            {% if task.raw_summary %}
+            <details class="summary-panel">
+              <summary>查看 Gemini 摘要</summary>
+              <div class="task-copy">{{ task.raw_summary }}</div>
+            </details>
             {% endif %}
             <div class="control-row">
               <button class="button secondary retry-button" data-task-id="{{ task.id }}" type="button">

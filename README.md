@@ -4,8 +4,8 @@ PetKit -> Gemini -> Feishu 的猫砂盆事件流水线与轻量看板。
 
 ## Current status
 
-This repository has completed the main `Phase 0` verification work and now includes a usable
-Dockerized dashboard:
+This repository now has the core `Phase 0` through `Phase 2` path working end to end and includes
+a usable Dockerized dashboard:
 
 - PetKit login, device discovery, and historical media lookup are working.
 - Temporary video download and decryption are working.
@@ -13,6 +13,7 @@ Dockerized dashboard:
 - Gemini video analysis with Chinese structured JSON output and fallback parsing is working.
 - Feishu Bitable record creation with screenshot attachment and single-select field mapping is working.
 - Scheduler and worker can now run as long-lived Docker services.
+- Scheduler CLI and worker CLI both support loop mode for long-running home deployments.
 - Worker failures can now auto-retry with exponential backoff before becoming terminal failures.
 - Analysis now persists screenshots to local storage before Feishu sync, so Feishu retries do not need to re-run Gemini.
 - PetKit preview images are now persisted locally during polling, and the dashboard reads them back from the task database instead of fetching them on demand.
@@ -166,6 +167,9 @@ Ambiguous Gemini results now map directly to the `看不清` single-select optio
 
 ## Next priorities
 
-- Expand the dashboard with retry timing, richer failure inspection, and replay tools.
+- Expand the dashboard with attempt counts, retry timing, sync-stage visibility, richer failure
+  inspection, and replay tools.
+- Add dedicated investigation views for task audit details, Gemini summaries, and persisted
+  screenshots without assuming videos remain locally available.
 - Tighten multi-worker claiming semantics further if we decide to scale beyond a single worker container.
 - Evolve the Feishu table schema so more structured fields can be written directly.

@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -15,7 +16,13 @@ from meow_toilet.domain.entities import SchedulerPollResult
 from meow_toilet.observability import configure_logging
 from meow_toilet.runtime import create_job_dispatcher
 from meow_toilet.services.artifacts import PersistentArtifactStore
-from meow_toilet.services.interfaces import JobDispatcher, MediaTaskStore, PetKitGateway
+from meow_toilet.services.interfaces import (
+    JobDispatcher,
+    MediaTaskStore,
+    PetKitGateway,
+    SchedulerStateStore,
+)
+from meow_toilet.services.scheduler_state import JsonFileSchedulerStateStore
 from meow_toilet.services.sql_task_store import SqlAlchemyMediaTaskStore
 import structlog
 
@@ -23,14 +30,14 @@ import structlog
 @dataclass(frozen=True, slots=True)
 class SchedulerHeartbeat:
     poll_interval_seconds: int
-    refresh_interval_seconds: int
+    check_interval_seconds: int
 
 
 def build_heartbeat() -> SchedulerHeartbeat:
     settings = get_settings()
     return SchedulerHeartbeat(
         poll_interval_seconds=settings.petkit_poll_interval_seconds,
-        refresh_interval_seconds=settings.petkit_session_refresh_seconds,
+        check_interval_seconds=settings.petkit_poll_check_interval_seconds,
     )
 
 
@@ -46,6 +53,8 @@ class PetKitPollingScheduler:
         task_store: MediaTaskStore,
         artifact_store: PersistentArtifactStore | None = None,
         dispatcher: JobDispatcher | None = None,
+        state_store: SchedulerStateStore | None = None,
+        poll_interval_seconds: int = 21600,
         now_provider: Callable[[], datetime] = _utc_now,
         device_ids: list[str] | None = None,
     ) -> None:
@@ -53,9 +62,35 @@ class PetKitPollingScheduler:
         self._task_store = task_store
         self._artifact_store = artifact_store
         self._dispatcher = dispatcher
+        self._state_store = state_store
+        self._poll_interval_seconds = poll_interval_seconds
         self._now_provider = now_provider
         self._device_ids = set(device_ids or [])
         self._logger = structlog.get_logger(__name__)
+
+    async def get_last_successful_poll_at(self) -> datetime | None:
+        if self._state_store is None:
+            return None
+        return await self._state_store.get_last_successful_poll_at()
+
+    async def should_poll(self) -> bool:
+        last_successful_poll_at = await self.get_last_successful_poll_at()
+        if last_successful_poll_at is None:
+            return True
+        return self._now_provider() - last_successful_poll_at >= timedelta(
+            seconds=self._poll_interval_seconds,
+        )
+
+    async def next_poll_due_at(self) -> datetime | None:
+        last_successful_poll_at = await self.get_last_successful_poll_at()
+        if last_successful_poll_at is None:
+            return None
+        return last_successful_poll_at + timedelta(seconds=self._poll_interval_seconds)
+
+    async def poll_due(self, *, source_day: str | None = None) -> SchedulerPollResult | None:
+        if not await self.should_poll():
+            return None
+        return await self.poll(source_day=source_day)
 
     async def poll(self, *, source_day: str | None = None) -> SchedulerPollResult:
         requested_day = source_day or self._now_provider().date().isoformat()
@@ -86,6 +121,9 @@ class PetKitPollingScheduler:
                         dispatched_task_count += int(dispatched)
                 else:
                     deduped_task_count += 1
+
+        if self._state_store is not None:
+            await self._state_store.set_last_successful_poll_at(self._now_provider())
 
         return SchedulerPollResult(
             source_day=requested_day,
@@ -128,23 +166,41 @@ async def _run_cli(args: argparse.Namespace) -> int:
     task_store = SqlAlchemyMediaTaskStore(settings.database_url)
     dispatcher = create_job_dispatcher(settings)
     petkit = PetKitApiAdapter.from_settings(settings)
+    state_store = JsonFileSchedulerStateStore(settings.scheduler_state_path)
     logger = structlog.get_logger(__name__)
     scheduler = PetKitPollingScheduler(
         petkit=petkit,
         task_store=task_store,
         artifact_store=PersistentArtifactStore(settings.screenshot_root, settings.preview_root),
         dispatcher=dispatcher,
+        state_store=state_store,
+        poll_interval_seconds=settings.petkit_poll_interval_seconds,
         device_ids=settings.petkit_device_id_list,
     )
     try:
         if args.loop:
             while True:
                 try:
-                    result = await scheduler.poll(source_day=args.source_day)
-                    _print_result(result)
+                    result = await scheduler.poll_due(source_day=args.source_day)
+                    if result is not None:
+                        _print_result(result)
+                    else:
+                        last_successful_poll_at = await scheduler.get_last_successful_poll_at()
+                        next_poll_due_at = await scheduler.next_poll_due_at()
+                        logger.info(
+                            "scheduler_poll_not_due",
+                            last_successful_poll_at=(
+                                last_successful_poll_at.isoformat()
+                                if last_successful_poll_at is not None
+                                else None
+                            ),
+                            next_poll_due_at=(
+                                next_poll_due_at.isoformat() if next_poll_due_at is not None else None
+                            ),
+                        )
                 except Exception:
                     logger.exception("scheduler_poll_iteration_failed")
-                await asyncio.sleep(settings.petkit_poll_interval_seconds)
+                await asyncio.sleep(settings.petkit_poll_check_interval_seconds)
             raise AssertionError("Unreachable scheduler loop exit.")
         else:
             result = await scheduler.poll(source_day=args.source_day)
@@ -178,13 +234,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Poll PetKit media and enqueue MeowToliet tasks.")
     parser.add_argument(
         "--source-day",
-        default=datetime.now().date().isoformat(),
-        help="Historical day to query from PetKit, in YYYY-MM-DD format.",
+        help="Historical day to query from PetKit, in YYYY-MM-DD format. Defaults to today when omitted.",
     )
     parser.add_argument(
         "--loop",
         action="store_true",
-        help="Keep polling on the configured interval instead of running only once.",
+        help="Wake up on the lightweight check interval and poll only when the persisted schedule is due.",
     )
     return asyncio.run(_run_cli(parser.parse_args()))
 

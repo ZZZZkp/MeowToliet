@@ -39,7 +39,7 @@ class FakeSnapshotService:
                 failed=0,
             ),
             poll_interval_seconds=300,
-            refresh_interval_seconds=1800,
+            check_interval_seconds=600,
             recent_tasks=[],
         )
 
@@ -160,6 +160,7 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
         cover_url="https://example.com/cover.jpg",
         encrypted_download_url="https://example.com/video.mp4",
         source_day="2026-04-10",
+        pet_name="翠饼",
     )
     sample_task = MediaTask(
         id="device-1:media-77",
@@ -167,8 +168,12 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
         status=JobStatus.SUCCEEDED,
         discovered_at=datetime(2026, 4, 10, 7, 56, tzinfo=UTC),
         updated_at=datetime(2026, 4, 10, 7, 57, tzinfo=UTC),
-        attempts=0,
+        attempts=2,
         feishu_sync_status=SyncStatus.PENDING,
+        feishu_sync_attempts=1,
+        feishu_sync_next_attempt_at=datetime(2026, 4, 10, 8, 5, tzinfo=UTC),
+        event_time=datetime(2026, 4, 10, 7, 55, 12, tzinfo=UTC),
+        raw_summary="Gemini says this looks like a short pee event.",
     )
 
     class SnapshotWithTaskService:
@@ -188,7 +193,7 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
                     failed=0,
                 ),
                 poll_interval_seconds=300,
-                refresh_interval_seconds=1800,
+                check_interval_seconds=600,
                 recent_tasks=[sample_task],
             )
 
@@ -204,6 +209,12 @@ def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() 
         assert 'data-task-id="device-1:media-77"' in response.text
         assert "分析 succeeded" in response.text
         assert "飞书 pending" in response.text
+        assert "分析尝试 2 次" in response.text
+        assert "飞书尝试 1 次" in response.text
+        assert "飞书重试 2026-04-10T08:05:00+00:00" in response.text
+        assert "猫 翠饼" in response.text
+        assert "查看 Gemini 摘要" in response.text
+        assert "Gemini says this looks like a short pee event." in response.text
         assert "buildCoverPlaceholder" in response.text
     finally:
         app.dependency_overrides.clear()

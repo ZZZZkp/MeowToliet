@@ -148,5 +148,5 @@ class DashboardSnapshot:
     integration: IntegrationSnapshot
     queue: QueueSnapshot
     poll_interval_seconds: int
-    refresh_interval_seconds: int
+    check_interval_seconds: int
     recent_tasks: list[MediaTask]

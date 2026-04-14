@@ -101,7 +101,7 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
         ),
         heartbeat_provider=lambda: SchedulerHeartbeat(
             poll_interval_seconds=300,
-            refresh_interval_seconds=1800,
+            check_interval_seconds=600,
         ),
         now_provider=lambda: datetime(2026, 4, 9, 8, 3, tzinfo=UTC),
     )
@@ -115,7 +115,7 @@ def test_dashboard_snapshot_service_reports_queue_and_recent_tasks() -> None:
         assert snapshot.queue.succeeded == 1
         assert snapshot.queue.total == 1
         assert snapshot.poll_interval_seconds == 300
-        assert snapshot.refresh_interval_seconds == 1800
+        assert snapshot.check_interval_seconds == 600
         assert snapshot.recent_tasks[0].media.id == sample_media.id
         assert snapshot.recent_tasks[0].status == JobStatus.SUCCEEDED
         assert snapshot.recent_tasks[0].feishu_record_id == "rec-dashboard"

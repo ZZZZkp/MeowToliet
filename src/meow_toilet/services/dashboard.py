@@ -53,7 +53,7 @@ class DashboardSnapshotService:
                 failed=sum(task.status == JobStatus.FAILED for task in all_tasks),
             ),
             poll_interval_seconds=heartbeat.poll_interval_seconds,
-            refresh_interval_seconds=heartbeat.refresh_interval_seconds,
+            check_interval_seconds=heartbeat.check_interval_seconds,
             recent_tasks=recent_tasks,
         )
 
