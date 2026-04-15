@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
+from datetime import timedelta
 from http import HTTPMethod
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
 
 import aiohttp
 from pypetkitapi import DownloadDecryptMedia, Litter, LitterRecord, MediaType, PetKitClient
 from pypetkitapi.const import LITTER_WITH_CAMERA
+from pypetkitapi.exceptions import PetkitSessionExpiredError
 from pypetkitapi.media import MediaCloud
 
 from meow_toilet.config import Settings
 from meow_toilet.domain.entities import PetKitDevice, PetKitMedia
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +47,7 @@ class PetKitApiAdapter:
         region: str,
         timezone_name: str,
         allowed_device_ids: set[str] | None = None,
+        session_refresh_seconds: int | None = None,
         session: aiohttp.ClientSession | None = None,
     ) -> None:
         self._username = username
@@ -49,6 +55,7 @@ class PetKitApiAdapter:
         self._region = region
         self._timezone_name = timezone_name
         self._allowed_device_ids = allowed_device_ids or set()
+        self._session_refresh_seconds = session_refresh_seconds
         self._session = session
         self._owns_session = session is None
         self._client: PetKitClient | None = None
@@ -64,6 +71,7 @@ class PetKitApiAdapter:
             region=settings.petkit_region,
             timezone_name=settings.app_timezone,
             allowed_device_ids=set(settings.petkit_device_id_list),
+            session_refresh_seconds=settings.petkit_session_refresh_seconds,
         )
 
     async def aclose(self) -> None:
@@ -73,109 +81,121 @@ class PetKitApiAdapter:
     async def ensure_session(self) -> None:
         async with self._lock:
             client = await self._ensure_client()
-            await client.validate_session()
+            await self._ensure_authenticated_client(client)
 
     async def list_devices(self) -> list[PetKitDevice]:
         async with self._lock:
-            client = await self._ensure_client()
-            await client.get_devices_data()
-            devices = self._collect_devices(client)
-            self._device_entities = {device.id: entity for device, entity in devices}
-            return [device for device, _entity in devices]
+            async def operation(client: PetKitClient) -> list[PetKitDevice]:
+                await client.get_devices_data()
+                devices = self._collect_devices(client)
+                self._device_entities = {device.id: entity for device, entity in devices}
+                return [device for device, _entity in devices]
+
+            return await self._run_with_session_recovery(operation)
 
     async def list_media(self, device: PetKitDevice, source_day: str) -> list[PetKitMedia]:
         async with self._lock:
-            client = await self._ensure_client()
-            if device.id not in self._device_entities:
-                await client.get_devices_data()
-                devices = self._collect_devices(client)
-                self._device_entities = {mapped.id: entity for mapped, entity in devices}
-            entity = await self._get_device_entity(device.id)
-            entity.device_records = await self._fetch_litter_records_for_day(
-                client=client,
-                entity=entity,
-                source_day=source_day,
-            )
-            media_items = await client.media_manager.gather_all_media_from_cloud([entity])
-            result: list[PetKitMedia] = []
-            for media_cloud in media_items:
-                if media_cloud.video is None:
-                    continue
-                mapped_media = self._map_media_cloud(
-                    media_cloud,
-                    source_day,
-                    pet_name=self._resolve_pet_name_for_media(
-                        media_cloud=media_cloud,
-                        records=entity.device_records or [],
-                    ),
+            async def operation(client: PetKitClient) -> list[PetKitMedia]:
+                if device.id not in self._device_entities:
+                    await client.get_devices_data()
+                    devices = self._collect_devices(client)
+                    self._device_entities = {mapped.id: entity for mapped, entity in devices}
+                entity = await self._get_device_entity(device.id)
+                entity.device_records = await self._fetch_litter_records_for_day(
+                    client=client,
+                    entity=entity,
+                    source_day=source_day,
                 )
-                self._media_cache[mapped_media.dedupe_key] = media_cloud
-                result.append(mapped_media)
-            result.sort(key=lambda item: item.started_at)
-            return result
+                media_items = await client.media_manager.gather_all_media_from_cloud([entity])
+                result: list[PetKitMedia] = []
+                for media_cloud in media_items:
+                    if media_cloud.video is None:
+                        continue
+                    mapped_media = self._map_media_cloud(
+                        media_cloud,
+                        source_day,
+                        pet_name=self._resolve_pet_name_for_media(
+                            media_cloud=media_cloud,
+                            records=entity.device_records or [],
+                        ),
+                    )
+                    self._media_cache[mapped_media.dedupe_key] = media_cloud
+                    result.append(mapped_media)
+                result.sort(key=lambda item: item.started_at)
+                return result
+
+            return await self._run_with_session_recovery(operation)
 
     async def download_media(self, media: PetKitMedia, destination: Path) -> Path:
         async with self._lock:
-            client = await self._ensure_client()
-            cloud_media = self._media_cache.get(media.dedupe_key)
-            if cloud_media is None:
-                cloud_media = await self._refresh_cached_media(client, media)
-            if cloud_media is None:
-                raise KeyError(
-                    f"PetKit media {media.dedupe_key} could not be reloaded from PetKit.",
-                )
-            if cloud_media.video is None:
-                raise ValueError(f"PetKit media {media.dedupe_key} does not have a video URL.")
+            async def operation(client: PetKitClient) -> Path:
+                cloud_media = self._media_cache.get(media.dedupe_key)
+                if cloud_media is None:
+                    cloud_media = await self._refresh_cached_media(client, media)
+                if cloud_media is None:
+                    raise KeyError(
+                        f"PetKit media {media.dedupe_key} could not be reloaded from PetKit.",
+                    )
+                if cloud_media.video is None:
+                    raise ValueError(
+                        f"PetKit media {media.dedupe_key} does not have a video URL.",
+                    )
 
-            return await self._download_cloud_media_file(
-                client=client,
-                cloud_media=cloud_media,
-                destination=destination,
-                media_type=MediaType.VIDEO,
-                suffix=".mp4",
-                missing_error=(
-                    f"PetKit media download finished without a decrypted video for {media.id}."
-                ),
-            )
+                return await self._download_cloud_media_file(
+                    client=client,
+                    cloud_media=cloud_media,
+                    destination=destination,
+                    media_type=MediaType.VIDEO,
+                    suffix=".mp4",
+                    missing_error=(
+                        f"PetKit media download finished without a decrypted video for {media.id}."
+                    ),
+                )
+
+            return await self._run_with_session_recovery(operation)
 
     async def download_cover_image(self, media: PetKitMedia, destination: Path) -> Path:
         async with self._lock:
-            client = await self._ensure_client()
-            cloud_media = self._media_cache.get(media.dedupe_key)
-            if cloud_media is None:
-                cloud_media = await self._refresh_cached_media(client, media)
-            if cloud_media is None:
-                raise KeyError(
-                    f"PetKit media {media.dedupe_key} could not be reloaded from PetKit.",
-                )
-            if cloud_media.image is None:
-                raise ValueError(
-                    f"PetKit media {media.dedupe_key} does not have a cover image URL.",
-                )
-            if not cloud_media.aes_key:
-                raise ValueError(
-                    f"PetKit media {media.dedupe_key} does not have a cover image AES key.",
+            async def operation(client: PetKitClient) -> Path:
+                cloud_media = self._media_cache.get(media.dedupe_key)
+                if cloud_media is None:
+                    cloud_media = await self._refresh_cached_media(client, media)
+                if cloud_media is None:
+                    raise KeyError(
+                        f"PetKit media {media.dedupe_key} could not be reloaded from PetKit.",
+                    )
+                if cloud_media.image is None:
+                    raise ValueError(
+                        f"PetKit media {media.dedupe_key} does not have a cover image URL.",
+                    )
+                if not cloud_media.aes_key:
+                    raise ValueError(
+                        f"PetKit media {media.dedupe_key} does not have a cover image AES key.",
+                    )
+
+                return await self._download_cloud_media_file(
+                    client=client,
+                    cloud_media=cloud_media,
+                    destination=destination,
+                    media_type=MediaType.IMAGE,
+                    suffix=".jpg",
+                    missing_error=(
+                        "PetKit media download finished without a decrypted cover image "
+                        f"for {media.id}."
+                    ),
                 )
 
-            return await self._download_cloud_media_file(
-                client=client,
-                cloud_media=cloud_media,
-                destination=destination,
-                media_type=MediaType.IMAGE,
-                suffix=".jpg",
-                missing_error=(
-                    "PetKit media download finished without a decrypted cover image "
-                    f"for {media.id}."
-                ),
-            )
+            return await self._run_with_session_recovery(operation)
 
     async def get_fresh_cover_url(self, media: PetKitMedia) -> str | None:
         async with self._lock:
-            client = await self._ensure_client()
-            cloud_media = await self._refresh_cached_media(client, media)
-            if cloud_media is None:
-                return media.cover_url
-            return cloud_media.image or media.cover_url
+            async def operation(client: PetKitClient) -> str | None:
+                cloud_media = await self._refresh_cached_media(client, media)
+                if cloud_media is None:
+                    return media.cover_url
+                return cloud_media.image or media.cover_url
+
+            return await self._run_with_session_recovery(operation)
 
     async def _refresh_cached_media(
         self,
@@ -304,6 +324,50 @@ class PetKitApiAdapter:
                 session=self._session,
             )
         return self._client
+
+    async def _run_with_session_recovery(
+        self,
+        operation: Callable[[PetKitClient], Awaitable[T]],
+    ) -> T:
+        client = await self._ensure_client()
+        await self._ensure_authenticated_client(client)
+        try:
+            return await operation(client)
+        except PetkitSessionExpiredError:
+            await self._login(client)
+            return await operation(client)
+
+    async def _ensure_authenticated_client(self, client: PetKitClient) -> None:
+        if self._session_refresh_due(client):
+            await self._login(client)
+            return
+        await client.validate_session()
+
+    async def _login(self, client: PetKitClient) -> None:
+        await client.login()
+        self._device_entities.clear()
+
+    def _session_refresh_due(self, client: PetKitClient) -> bool:
+        if self._session_refresh_seconds is None or self._session_refresh_seconds <= 0:
+            return False
+
+        created_at = self._get_session_created_at(client)
+        if created_at is None:
+            return False
+
+        return self._current_time() - created_at >= timedelta(
+            seconds=self._session_refresh_seconds,
+        )
+
+    def _get_session_created_at(self, client: PetKitClient) -> datetime | None:
+        session_info = getattr(client, "_session", None)
+        raw_created_at = getattr(session_info, "created_at", None)
+        if not raw_created_at:
+            return None
+        return datetime.strptime(str(raw_created_at), "%Y-%m-%dT%H:%M:%S.%f%z")
+
+    def _current_time(self) -> datetime:
+        return datetime.now(UTC)
 
     async def _get_device_entity(self, device_id: str) -> Litter:
         entity = self._device_entities.get(device_id)
