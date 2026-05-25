@@ -27,3 +27,9 @@ def test_settings_default_worker_stale_timeout_seconds() -> None:
     settings = Settings()
 
     assert settings.worker_stale_task_timeout_seconds == 600
+
+
+def test_settings_default_petkit_poll_interval_is_twenty_four_hours() -> None:
+    settings = Settings()
+
+    assert settings.petkit_poll_interval_seconds == 86400

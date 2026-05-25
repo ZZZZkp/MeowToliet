@@ -54,7 +54,7 @@ class PetKitPollingScheduler:
         artifact_store: PersistentArtifactStore | None = None,
         dispatcher: JobDispatcher | None = None,
         state_store: SchedulerStateStore | None = None,
-        poll_interval_seconds: int = 21600,
+        poll_interval_seconds: int = 86400,
         now_provider: Callable[[], datetime] = _utc_now,
         device_ids: list[str] | None = None,
     ) -> None:

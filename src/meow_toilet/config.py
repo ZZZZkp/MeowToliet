@@ -74,7 +74,7 @@ class Settings:
     )
     petkit_region: str = field(default_factory=lambda: _read_str("PETKIT_REGION", "cn"))
     petkit_poll_interval_seconds: int = field(
-        default_factory=lambda: _read_int("PETKIT_POLL_INTERVAL_SECONDS", 21600),
+        default_factory=lambda: _read_int("PETKIT_POLL_INTERVAL_SECONDS", 86400),
     )
     petkit_poll_check_interval_seconds: int = field(
         default_factory=lambda: _read_int("PETKIT_POLL_CHECK_INTERVAL_SECONDS", 600),
