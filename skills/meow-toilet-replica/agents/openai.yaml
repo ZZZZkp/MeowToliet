@@ -1,0 +1,7 @@
+interface:
+  display_name: "Meow Toilet Replica"
+  short_description: "Implement the MeowToliet runtime blueprint"
+  default_prompt: "Use $meow-toilet-replica to implement a system with the same behavior as MeowToliet, including scheduler polling, worker processing, retries, persisted previews and screenshots, Feishu sync, and dashboard controls."
+
+policy:
+  allow_implicit_invocation: true
