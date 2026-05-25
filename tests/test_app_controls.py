@@ -218,6 +218,29 @@ def test_video_routes_return_404_when_task_or_video_is_unavailable() -> None:
         app.dependency_overrides.clear()
 
 
+def test_video_api_returns_503_when_download_raises() -> None:
+    class ErrorVideoService:
+        async def get_task(self, task_id: str):
+            return None
+
+        async def load_video_asset(self, task_id: str):
+            raise RuntimeError("download failed")
+
+        async def aclose(self) -> None:
+            return None
+
+    app.dependency_overrides[get_dashboard_video_service] = lambda: ErrorVideoService()
+
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/api/media/video/some-task", follow_redirects=False)
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Video temporarily unavailable."}
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_dashboard_page_renders_cache_busting_cover_url_and_fallback_metadata() -> None:
     sample_media = PetKitMedia(
         id="media-77",

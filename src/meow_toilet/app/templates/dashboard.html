@@ -675,10 +675,7 @@
       }
 
       function openTaskPlayer(taskId) {
-        const opened = window.open(buildPlayerUrl(taskId), "_blank", "noopener,noreferrer");
-        if (!opened) {
-          window.location.href = buildPlayerUrl(taskId);
-        }
+        window.open(buildPlayerUrl(taskId), "_blank", "noopener,noreferrer");
       }
 
       async function runOperation(button, url) {

@@ -149,14 +149,16 @@ async def dashboard_video(
     task_id: str,
     video_service: VideoServiceDep,
 ) -> FileResponse:
-    asset = await video_service.load_video_asset(task_id)
+    try:
+        asset = await video_service.load_video_asset(task_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Video temporarily unavailable.") from exc
     if asset is None:
         raise HTTPException(status_code=404, detail="Video not found.")
 
     return FileResponse(
         path=asset.path,
         media_type=asset.media_type,
-        filename=asset.path.name,
         headers={
             "Cache-Control": "no-store, max-age=0",
             "Pragma": "no-cache",

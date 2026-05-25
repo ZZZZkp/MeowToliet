@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 from pypetkitapi import DownloadDecryptMedia, Litter, LitterRecord, MediaType, PetKitClient
-from pypetkitapi.const import LITTER_WITH_CAMERA
-from pypetkitapi.exceptions import PetkitSessionExpiredError
+from pypetkitapi.const import LITTER_WITH_CAMERA, RecordType
+from pypetkitapi.exceptions import PetkitSessionError, PetkitSessionExpiredError
 from pypetkitapi.media import MediaCloud
 
 from meow_toilet.config import Settings
@@ -130,6 +130,8 @@ class PetKitApiAdapter:
         async with self._lock:
             async def operation(client: PetKitClient) -> Path:
                 cloud_media = self._media_cache.get(media.dedupe_key)
+                if cloud_media is None and media.encrypted_download_url is not None:
+                    cloud_media = self._build_cloud_media_from_stored(media)
                 if cloud_media is None:
                     cloud_media = await self._refresh_cached_media(client, media)
                 if cloud_media is None:
@@ -333,7 +335,7 @@ class PetKitApiAdapter:
         await self._ensure_authenticated_client(client)
         try:
             return await operation(client)
-        except PetkitSessionExpiredError:
+        except (PetkitSessionError, PetkitSessionExpiredError):
             await self._login(client)
             return await operation(client)
 
@@ -406,6 +408,24 @@ class PetKitApiAdapter:
         if not isinstance(response, list):
             return []
         return [LitterRecord(**item) for item in response]
+
+    def _build_cloud_media_from_stored(self, media: PetKitMedia) -> MediaCloud:
+        """Build a MediaCloud from already-stored PetKitMedia data.
+
+        Avoids calling get_devices_data() (which hits device_detail endpoints that PetKit
+        rate-limits aggressively) when the video URL is already persisted in the database.
+        """
+        return MediaCloud(
+            event_id=media.id,
+            event_type=RecordType.TOILETING,
+            device_id=int(media.device_id),
+            user_id=0,
+            image=None,
+            video=media.encrypted_download_url,
+            filepath=f"{media.device_id}/{media.source_day}",
+            aes_key="",
+            timestamp=int(media.started_at.timestamp()),
+        )
 
     def _collect_devices(self, client: PetKitClient) -> list[tuple[PetKitDevice, Litter]]:
         devices: list[tuple[PetKitDevice, Litter]] = []
